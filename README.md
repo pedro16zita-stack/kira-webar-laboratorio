@@ -1,19 +1,31 @@
-# KIRA — laboratório WebAR
+# KIRA — WebAR 0.6
 
-Protótipos de viabilidade para TCC de Design de Moda. Esta página é experimental; não é a experiência final.
+Protótipo gratuito do TCC KIRA. Mantém a imagem-alvo provisória e a saída por punho. Não exige aplicativo nem conta para participar.
 
-1. Abra a página HTTPS no Safari (iPad/iPhone) ou Chrome (Android).
-2. Abra alvo_provisorio.png em uma segunda tela ou impressão.
-3. Escolha a câmera, inicie e autorize seu uso.
-4. Mostre o alvo, retire-o e enquadre a pessoa. Se necessário, escolha o lado na tela. Feche o punho inteiro de frente para a câmera por cerca de 1 segundo; pontos verdes indicam mão detectada. Não é necessário abrir a palma antes.
-5. Baixe os resultados; reporte aparelho, sistema, câmera e problemas.
+## Uso
 
-A permanência é relativa à câmera, sem âncora espacial no ambiente. A versão 0.5 ajusta a escala pelo tamanho aparente do rosto e mantém a cabeça alinhada à pessoa: aproximar aumenta Ryuk e corta naturalmente a parte inferior do corpo; afastar mostra mais do personagem. O seletor de proporção continua disponível. Se perder o rosto, mantém a última proporção válida. Não é medição de distância em metros.
+1. Abra o endereço HTTPS pelo QR Code ou link e permita a câmera.
+2. Mostre a imagem-alvo. Em seguida, enquadre a pessoa.
+3. Corpo e ombros mantêm Ryuk na composição. Com os dois pés visíveis e confiáveis, eles fornecem a referência vertical. A escala pertence a um grupo diferente do movimento de flutuação.
+4. O personagem inicia a sequência de caminhada após 10 s, caminha por 5 s, encara a pessoa por 2 s e flutua lateralmente.
+5. Feche o punho inteiro por cerca de 1 s para ativar a fumaça de 128 partículas.
+6. Se a pessoa sair, Ryuk é ocultado após uma tolerância curta contra falhas de detecção. Após 1,2 s sem rastreamento válido, a sessão encerra. Retire e apresente o alvo novamente para reativar; uma pessoa que entra depois não reabre a sessão sozinha.
 
-A sequência começa quando Ryuk aparece: aos 10 segundos, os olhos da pessoa começam a ficar vermelhos (transição de 1,2 s) e ele caminha lateralmente durante 5 s; depois encara a pessoa por 2 s e inicia flutuação lateral contínua. A caminhada é uma animação procedural de oito articulações do esqueleto existente. Sem rastreamento do chão, não garante contato dos pés com o piso. O punho interrompe a sequência e aciona a fumaça de saída de 2,6 s. As duas animações originais foram preservadas no GLB.
+O rastreamento usa MediaPipe Pose Landmarker Lite com 33 pontos, incluindo tornozelos, calcanhares e pontas dos pés. Não identifica o cosplayer por identidade. Usa continuidade espacial e não garante distinguir duas pessoas que se substituam na mesma posição sem intervalo. Não mede nem ancora o piso real em 3D. Pés fora da câmera ou com baixa confiança são ignorados; não são tratados como detecções válidas.
 
-O recorte da pessoa e a detecção dos olhos usam o mesmo quadro capturado, evitando desenhar os olhos em um quadro diferente da silhueta. A cor é limitada à íris e recortada pelas pálpebras, preservando a pupila. Rostos distantes, parcialmente fora do enquadramento ou mal iluminados podem impedir o efeito. Se o recorte falhar, o laboratório informa o uso apenas da posição lateral; os olhos também ficam indisponíveis nesse modo.
+Os olhos vermelhos da pessoa foram removidos. O rosto e os olhos do modelo Ryuk usam as texturas originais, com materiais opacos corrigidos. Geometria, ossos, texturas e dois clipes originais foram preservados.
 
-Bordas, cabelo, olhos, velocidade e seguimento precisam ser validados no aparelho. A meta da renderização é 30 quadros/s; os resultados incluem a cadência efetivamente medida. A capa definitiva não foi testada. As imagens da câmera não são enviadas a um servidor. Dependências com versões fixadas podem carregar de CDN.
+## Ensaios
 
-Código das bibliotecas: MindAR MIT; Three.js MIT; MediaPipe Apache-2.0. Consulte os arquivos *_MIT.txt e MEDIAPIPE_APACHE2.txt. Créditos e procedência do modelo em CREDITOS_RYUK.md; a licença das bibliotecas não concede direitos sobre personagens ou assets. Projeto educacional, sem afiliação oficial com Death Note ou seus titulares.
+Os botões em “Ensaios com imagens digitais” verificam corpo e pés em fotos, perda da pessoa, bloqueio de retorno sem alvo, escala durante flutuação, materiais do rosto, alvo e punho. São ensaios com arquivos; não substituem o teste no celular e no caderno físico. O JSON inclui a cadência real da renderização e os tempos dos dois processadores.
+
+As imagens da câmera são processadas no aparelho, sem gravação nem envio. Dependências com versões fixas e WebAssembly podem carregar de CDN. Safari/iPhone, iPad e Android precisam ser testados individualmente. O recorte da pessoa mantém o Selfie Segmenter anterior. Processamento corporal e da mão ficam em workers separados; no máximo um quadro de cada tipo fica em processamento.
+
+## Fontes e licenças
+
+- [Pose Landmarker e modelo Lite](https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker?tab=Web).
+- [Modelo oficial](https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task).
+- [Foto de referência oficial MediaPipe](https://storage.googleapis.com/mediapipe-assets/pose.jpg), usada somente nos ensaios.
+- MindAR MIT; Three.js MIT; MediaPipe Apache-2.0. Licenças incluídas. Créditos do Ryuk em `CREDITOS_RYUK.md`; a licença das bibliotecas não transfere direitos sobre personagens ou assets.
+
+Projeto educacional. A capa física definitiva, a escala real e o novo rastreamento em movimento no celular permanecem dependentes de teste.

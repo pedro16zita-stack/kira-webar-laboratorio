@@ -1,0 +1,194 @@
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {WorkerRunner} from './worker-runner.js?v=0.6';
+import {BodyFramer,PersonSession} from './body-tracking.js?v=0.6';
+import {GestureGate} from './gesture-gate.js?v=0.6';
+import {sceneSequence} from './sequence-v006.js?v=0.6';
+import {Compositor} from './compositor.js?v=0.6';
+
+const $=s=>document.querySelector(s),W=480,H=640,SMOKE_COUNT=128;
+const report={versions:{lab:'0.6',three:THREE.REVISION,mediapipe:'0.10.21',mindar:'1.2.5'},environment:{userAgent:navigator.userAgent,secureContext:isSecureContext},humanRedEyes:false,tests:{},errors:[]};
+const show=()=>$('#results').textContent=JSON.stringify(report,null,2),status=t=>$('#status').textContent=t;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const loadImage=url=>new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=()=>reject(new Error('Não carregou '+url));i.src=url});
+let renderer,scene,camera,placement,motion,model,mixer,entry,idle,refs,modelPromise,Controller,controllerPromise,smoke,smokeStart=null;
+let live=false,demo=false,testing=false,phase='idle',token=0,epoch=0,videoStream,bodyRunner,handRunner,compositor,targetController;
+let targetBusy=false,bodyBusy=false,handBusy=false,lastTarget=0,lastBody=0,lastHand=0,bodyReady=false,handReady=false,mustClear=false,armedAt=0;
+let appearanceAt=null,entryElapsed=0,appearing=false,front=false,sideDirection=1,autoSide=null,lastBodyData=null,framing=null,exitTrigger=null;
+let targetPlacement={x:0,y:0,scale:1},sequence=sceneSequence(0),frameTimes=[],bodyTimes=[],handTimes=[],lastPoseDeltas=[],walkRig=[];
+const framer=new BodyFramer(),person=new PersonSession(),gestureGate=new GestureGate();
+const viewHeight=()=>2*camera.position.z*Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+const text=(selector,value)=>{if($(selector).textContent!==value)$(selector).textContent=value};
+
+function defaultCamera(){camera.position.set(0,1.2,4.8);camera.rotation.set(0,0,0);camera.aspect=.75;camera.updateProjectionMatrix();renderer.setSize(W,H)}
+function setupModels(){if(modelPromise)return modelPromise;modelPromise=(async()=>{
+ status('Carregando personagem…');renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.setSize(720,460);$('#view').appendChild(renderer.domElement);
+ scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(40,720/460,.01,40);camera.position.set(0,1.2,4.8);scene.add(new THREE.HemisphereLight(0xffffff,0x5a5263,1.6));const key=new THREE.DirectionalLight(0xffffff,2);key.position.set(2,4,5);scene.add(key);
+ placement=new THREE.Group();motion=new THREE.Group();placement.add(motion);scene.add(placement);
+ const gltf=await new GLTFLoader().loadAsync('./ryuk-v006.glb');model=gltf.scene;motion.add(model);mixer=new THREE.AnimationMixer(model);
+ const materials=[];model.traverse(o=>{if(!o.isMesh)return;for(const m of Array.isArray(o.material)?o.material:[o.material]){m.userData.original={transparent:m.transparent,depthWrite:m.depthWrite};for(const map of [m.map,m.normalMap,m.emissiveMap])if(map)map.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy());if(!materials.some(x=>x.name===m.name))materials.push({name:m.name,transparent:m.transparent,roughness:m.roughness});}});
+ entry=mixer.clipAction(gltf.animations.find(a=>a.name==='01_Manifestacao'));entry.setLoop(THREE.LoopOnce,1);entry.clampWhenFinished=true;idle=mixer.clipAction(gltf.animations.find(a=>a.name==='02_Suspensao'));idle.play();mixer.update(.1);scene.updateMatrixWorld(true);
+ const point=name=>{const o=model.getObjectByName(name);if(!o)throw new Error('Osso ausente: '+name);return o.getWorldPosition(new THREE.Vector3())};
+ const l=point('bip_upperArm_L'),r=point('bip_upperArm_R'),hl=point('bip_hip_L'),hr=point('bip_hip_R'),box=new THREE.Box3().setFromObject(model,true),head=new THREE.Box3().setFromObject(model.getObjectByName('Head'),true);
+ refs={shoulderWidth:Math.abs(l.x-r.x),shoulderY:(l.y+r.y)/2,hipY:(hl.y+hr.y)/2,footY:box.min.y,height:box.max.y-box.min.y,headY:(head.min.y+head.max.y)/2};refs.torsoHeight=refs.shoulderY-refs.hipY;
+ for(const side of ['L','R'])for(const [part,amp] of [['hip',.28],['knee',.35],['foot',.12],['upperArm',.10]]){const bone=model.getObjectByName('bip_'+part+'_'+side);if(bone)walkRig.push({bone,part,amp,phase:side==='L'?0:Math.PI})}
+ makeSmoke();report.tests.MODEL={animations:gltf.animations.map(a=>({name:a.name,duration:a.duration})),materials,refs,walkJoints:walkRig.length,geometryReplaced:false};placement.visible=false;
+ let previous=performance.now();renderer.setAnimationLoop(()=>{const now=performance.now();if(now-previous<1000/30-1)return;const frameMs=now-previous,dt=Math.min(frameMs/1000,.1);previous=now;if(live||demo){frameTimes.push(frameMs);if(frameTimes.length>180)frameTimes.shift()}
+  clearPose();mixer.update(dt);if(appearing){entryElapsed+=dt;if(entryElapsed>=entry.getClip().duration){entry.stop();idle.reset().play();appearing=false}}
+  if(live||demo)updateScene(now,dt);
+  updateSmoke(now);renderer.render(scene,camera);
+ });$('#smoke').disabled=false;show();return model;
+ })();return modelPromise}
+function makeSmoke(){
+ const sprite=document.createElement('canvas');sprite.width=sprite.height=128;const ctx=sprite.getContext('2d'),pixels=ctx.createImageData(128,128);
+ for(let y=0;y<128;y++)for(let x=0;x<128;x++){const dx=(x-64)/64,dy=(y-64)/64,r=Math.hypot(dx,dy),cloud=.63+.19*Math.sin(x*.13+Math.sin(y*.12)*2)+.13*Math.sin(y*.17+x*.06)+.05*Math.sin(x*.39-y*.31),a=Math.max(0,1-r)**1.7*Math.max(0,cloud),i=(y*128+x)*4;pixels.data[i]=63;pixels.data[i+1]=57;pixels.data[i+2]=71;pixels.data[i+3]=Math.round(Math.min(1,a)*220)}ctx.putImageData(pixels,0,0);
+ const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(SMOKE_COUNT*3),3));smoke=new THREE.Points(geometry,new THREE.PointsMaterial({map:new THREE.CanvasTexture(sprite),color:0xffffff,size:.8,transparent:true,depthWrite:false,opacity:0}));smoke.visible=false;scene.add(smoke);
+}
+function restoreMaterials(){model.traverse(o=>{if(o.isMesh)for(const m of Array.isArray(o.material)?o.material:[o.material]){m.opacity=1;m.transparent=m.userData.original.transparent;m.depthWrite=m.userData.original.depthWrite}})}
+function clearPose(){for(const {bone,q} of lastPoseDeltas)bone.quaternion.multiply(q.clone().invert());lastPoseDeltas=[];}
+function poseDelta(bone,axis,angle){const q=new THREE.Quaternion().setFromAxisAngle(axis,angle);bone.quaternion.multiply(q);lastPoseDeltas.push({bone,q})}
+function applyWalk(time,amount){if(amount<=0)return;for(const j of walkRig){const wave=Math.sin(time*Math.PI*2*.9+j.phase),angle=(j.part==='knee'?Math.max(0,-wave):j.part==='upperArm'?-wave:wave)*j.amp*amount;poseDelta(j.bone,new THREE.Vector3(1,0,0),angle)}}
+function reveal(now){phase='active';appearanceAt=now;restoreMaterials();placement.visible=true;model.visible=true;entry.reset().play();idle.stop();appearing=true;entryElapsed=0;}
+function updateScene(now,dt){
+ const p=person.state(now);if(p.expired&&['active','exiting','complete','body'].includes(phase)){endSession('Pessoa saiu. Retire e apresente o alvo novamente.');return}
+ if(phase==='body'&&bodyReady&&!p.bound&&now-armedAt>15000){endSession('Nenhuma pessoa enquadrada. Apresente o alvo novamente.');return}
+ if(phase==='active'&&p.visible){
+  const a=1-Math.exp(-dt*4);placement.visible=true;placement.position.x+=(targetPlacement.x-placement.position.x)*a;placement.position.y+=(targetPlacement.y-placement.position.y)*a;const scale=placement.scale.x+(targetPlacement.scale-placement.scale.x)*a;placement.scale.setScalar(scale);
+  const elapsed=(now-appearanceAt)/1000;sequence=sceneSequence(elapsed);motion.position.set(sequence.x*viewHeight()*camera.aspect/scale,sequence.lift*viewHeight()/scale,0);
+  const yaw=sequence.stage==='caminhada'?sequence.yaw:-sideDirection*(sequence.stage==='encarar'?.3:.12);motion.rotation.y+=(yaw-motion.rotation.y)*a;
+  applyWalk(elapsed-10,sequence.walk);if(elapsed>=15)poseDelta(model.getObjectByName('bip_head'),new THREE.Vector3(0,1,0),-sideDirection*.22*THREE.MathUtils.smoothstep(elapsed,15,15.7));
+ }else if(phase==='active')placement.visible=false;
+ if(phase==='exiting'&&!p.visible){placement.visible=false;smoke.visible=false;}
+ if(live)updateLiveStatus();
+}
+function startExit(trigger='gesture'){
+ if(!['active','test'].includes(phase))return;phase='exiting';exitTrigger=trigger;scene.updateMatrixWorld(true);smoke.position.copy(motion.getWorldPosition(new THREE.Vector3()));smoke.scale.copy(placement.scale);smokeStart=performance.now();if(report.live&&live){report.live.exitTriggered=true;report.live.exitAt=new Date().toISOString()}
+}
+function updateSmoke(now){
+ if(smokeStart===null)return;const u=Math.min(1,(now-smokeStart)/2600),allowed=!(live||demo)||person.state(now).visible;smoke.visible=u<1&&allowed;smoke.material.opacity=Math.sin(Math.PI*u)*.88;smoke.material.size=(.65+.7*u)*smoke.scale.x;
+ const pos=smoke.geometry.attributes.position;for(let i=0;i<SMOKE_COUNT;i++){const angle=i*2.39996+u*.7,r=(.2+.55*Math.sin(i*4.3)**2)*(1+u*.7);pos.setXYZ(i,Math.cos(angle)*r+.12*Math.sin(i+u*3),(i/(SMOKE_COUNT-1))*2.5+u*.45,Math.sin(angle)*r)}pos.needsUpdate=true;
+ model.traverse(o=>{if(o.isMesh)for(const m of Array.isArray(o.material)?o.material:[o.material]){m.transparent=true;m.depthWrite=false;m.opacity=1-THREE.MathUtils.smoothstep(u,.18,.78)}});
+ if(u===1){placement.visible=false;smoke.visible=false;smokeStart=null;phase='complete';report.tests.SMOKE={trigger:exitTrigger,particles:SMOKE_COUNT,seconds:2.6,modelHidden:true,smokeHidden:true};show()}
+}
+function resetScene(){clearPose();restoreMaterials();placement.visible=false;placement.position.set(0,0,0);placement.scale.setScalar(1);motion.position.set(0,0,0);motion.rotation.set(0,0,0);model.visible=true;smoke.visible=false;smokeStart=null;appearanceAt=null;appearing=false;entry.stop();idle.reset().play();framer.reset();person.arm();gestureGate.reset();autoSide=null;lastBodyData=null;framing=null;frameTimes=[];sequence=sceneSequence(0)}
+function armTarget(now){epoch++;resetScene();phase='body';armedAt=now;if(live){report.live.targetRecognized=true;report.live.targetAt=new Date().toISOString();report.live.personLost=false;report.live.requiresTargetAgain=false;report.live.exitTriggered=false;report.live.handSeen=false;report.live.gesture=null;}}
+function endSession(reason){epoch++;phase='target';placement.visible=false;smoke.visible=false;smokeStart=null;clearPose();mustClear=true;compositor?.clear();gestureGate.reset();if(report.live&&live){report.live.personLost=true;report.live.requiresTargetAgain=true;report.live.personLossAt=new Date().toISOString()}text('#liveStatus',reason)}
+function updatePlacement(body){
+ const f=framer.update(body,refs,Number($('#size').value),viewHeight(),camera.aspect);if(!f)return;lastBodyData=body;framing=f;const center=body.center.x;
+ if(autoSide===null)autoSide=center<=.5?1:-1;if(center<.35)autoSide=1;else if(center>.65)autoSide=-1;
+ const choice=$('#side').value;sideDirection=choice==='auto'?autoSide:((choice==='right')!==front?1:-1);
+ const x=Math.max(.18,Math.min(.82,center+sideDirection*Math.max(.2,body.shoulderWidth*.8+.12)));
+ targetPlacement={x:(x-.5)*viewHeight()*camera.aspect,y:camera.position.y+(.5-f.anchorY)*viewHeight()-f.localY*f.scale,scale:f.scale};
+}
+function acceptBody(r,now){
+ const state=person.update(r.body,now);if(state.accepted&&state.visible){if(phase==='body'){updatePlacement(r.body);placement.position.set(targetPlacement.x,targetPlacement.y,0);placement.scale.setScalar(targetPlacement.scale);reveal(now)}else if(phase==='active')updatePlacement(r.body);}
+ if(state.expired)endSession('Pessoa saiu. Apresente o caderno novamente.');
+ if(live){report.live.person={present:r.body.present,visible:state.visible,bound:state.bound,feetVisible:r.body.feetVisible,framingSource:framing?.source??null};report.live.bodyDetections+=r.body.present?1:0;report.live.maskFrames++;report.live.occlusionApplied=true;report.live.redEyes=false;}
+ return state;
+}
+function updateLiveStatus(){
+ if(phase==='target'){text('#liveStatus',mustClear?'Pessoa fora da cena. Retire e apresente o alvo novamente.':'Apresente a imagem-alvo inteira.');return}
+ if(!bodyReady){text('#liveStatus','Preparando rastreamento corporal…');return}
+ if(phase==='body'){text('#liveStatus','Caderno reconhecido. Enquadre a pessoa para Ryuk aparecer.');return}
+ if(phase==='complete'){text('#liveStatus','Saída concluída. Toque em reiniciar para repetir.');return}
+ if(phase==='exiting'){text('#liveStatus','Saída por fumaça acionada.');return}
+ const state=person.state(performance.now());if(!state.visible){text('#liveStatus','Pessoa fora do enquadramento. Ryuk está oculto.');return}
+ const feet=lastBodyData?.feetVisible?'Pés detectados.':'Pés fora do enquadramento; usando tronco/ombros.';
+ const hand=!handReady?'Preparando saída por mão…':report.live.handSeen?(report.live.gesture?.name==='Closed_Fist'?'Punho: '+Math.round(gestureGate.progress*100)+'%. Segure.':'Mão detectada. Feche o punho para sair.'):'Enquadre a mão inteira para a saída.';text('#liveStatus',feet+' '+hand);
+}
+function drawCover(video,canvas){const ctx=canvas.getContext('2d'),s=Math.max(W/video.videoWidth,H/video.videoHeight),sw=W/s,sh=H/s;ctx.drawImage(video,(video.videoWidth-sw)/2,(video.videoHeight-sh)/2,sw,sh,0,0,W,H)}
+function canvas(){const c=document.createElement('canvas');c.width=W;c.height=H;return c}
+async function setupTarget(){if(!controllerPromise)controllerPromise=import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js').then(m=>Controller=m.Controller);await controllerPromise}
+function stopLive(){
+ token++;epoch++;live=false;bodyRunner?.close();handRunner?.close();bodyRunner=handRunner=null;videoStream?.getTracks().forEach(t=>t.stop());videoStream=null;bodyReady=handReady=false;
+ const old=targetController;targetController=null;if(old)setTimeout(()=>old.dispose(),500);compositor?.dispose();compositor=null;const v=$('#video');v.srcObject=null;v.hidden=true;$('#view').classList.remove('live');if(placement){placement.visible=false;smoke.visible=false;smokeStart=null;renderer.domElement.style.transform='none'}
+ phase='idle';$('#live').disabled=false;$('#camera').disabled=false;text('#liveStatus','Câmera desligada.');if(report.live){report.live.endedAt=new Date().toISOString();show()}
+}
+$('#live').onclick=async()=>{
+ if(live||testing||$('#live').disabled)return;$('#live').disabled=true;$('#camera').disabled=true;const mine=++token;
+ try{
+  text('#liveStatus','Carregando personagem e câmera…');await Promise.all([setupModels(),setupTarget()]);if(mine!==token)return;defaultCamera();resetScene();front=$('#camera').value==='user';
+  const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:front?'user':'environment'},width:{ideal:640},height:{ideal:480}}});if(mine!==token){stream.getTracks().forEach(t=>t.stop());return}videoStream=stream;
+  const video=$('#video');video.srcObject=stream;await video.play();if(mine!==token)return;video.hidden=false;video.style.transform=front?'scaleX(-1)':'none';renderer.domElement.style.transform=front?'scaleX(-1)':'none';$('#view').appendChild(video);$('#view').classList.add('live');compositor=new Compositor($('#view'),front);
+  live=true;phase='target';mustClear=false;targetBusy=bodyBusy=handBusy=false;lastTarget=lastBody=lastHand=0;bodyTimes=[];handTimes=[];
+  report.live={startedAt:new Date().toISOString(),camera:front?'frontal':'traseira',videoSize:[video.videoWidth,video.videoHeight],tracks:stream.getVideoTracks().length,tracking:'body-pose',humanRedEyes:false,targetRecognized:false,bodyDetections:0,maskFrames:0,occlusionApplied:false,exitTriggered:false,personLost:false,requiresTargetAgain:false,handSeen:false,gesture:null,worldAnchor:false};
+  bodyRunner=new WorkerRunner('./body-worker.js?v=0.6');handRunner=new WorkerRunner('./hand-worker.js?v=0.6');
+  bodyRunner.ready.then(()=>{if(mine===token){bodyReady=true;if(phase==='body')armedAt=performance.now()}}).catch(e=>{if(mine===token){report.errors.push({stage:'body-init',message:e.message});stopLive();text('#liveStatus','Rastreamento corporal indisponível: '+e.message)}});
+  handRunner.ready.then(()=>{if(mine===token)handReady=true}).catch(e=>{if(mine===token){report.errors.push({stage:'hand-init',message:e.message});show()}});
+  const ctl=new Controller({inputWidth:W,inputHeight:H});targetController=ctl;await ctl.addImageTargets('./alvo_provisorio.mind');if(mine!==token)return;
+  const targetCanvas=canvas(),bodyCanvas=canvas(),handCanvas=canvas();let lastReport=0;
+  const loop=()=>{
+   if(!live||mine!==token)return;const now=performance.now();
+   if(phase==='target'&&!targetBusy&&now-lastTarget>350&&video.readyState>=2){targetBusy=true;lastTarget=now;drawCover(video,targetCanvas);const e=epoch;ctl.detect(targetCanvas).then(d=>ctl.match(d.featurePoints,0)).then(m=>{if(mine!==token||e!==epoch)return;if(!m.modelViewTransform)mustClear=false;else if(!mustClear)armTarget(performance.now())}).catch(e=>{if(mine===token)report.errors.push({stage:'target',message:e.message})}).finally(()=>{if(mine===token)targetBusy=false});}
+   if(['body','active','exiting','complete'].includes(phase)&&bodyReady&&!bodyBusy&&now-lastBody>=100){
+    bodyBusy=true;lastBody=now;drawCover(video,bodyCanvas);const e=epoch,runner=bodyRunner;runner.infer(bodyCanvas,now).then(r=>{if(mine!==token||e!==epoch){r.bitmap.close();return}compositor.paint(r);acceptBody(r,performance.now());compositor.drawGuides($('#guides').checked);bodyTimes.push(r.ms);if(bodyTimes.length>90)bodyTimes.shift();}).catch(e=>{if(mine===token){report.errors.push({stage:'body-frame',message:e.message});endSession('Rastreamento interrompido. Apresente o alvo novamente.');show()}}).finally(()=>{if(mine===token)bodyBusy=false});
+   }
+   if(phase==='active'&&person.state(now).visible&&handReady&&!handBusy&&now-lastHand>=180){
+    handBusy=true;lastHand=now;drawCover(video,handCanvas);const e=epoch,runner=handRunner;runner.infer(handCanvas,now).then(r=>{if(mine!==token||e!==epoch)return;report.live.handSeen=r.handSeen;report.live.gesture=r.gesture;compositor.hand=r.points;compositor.drawGuides($('#guides').checked);if(gestureGate.update(r.gesture,performance.now()))startExit();handTimes.push(r.ms);if(handTimes.length>90)handTimes.shift();}).catch(e=>{if(mine===token)report.errors.push({stage:'hand-frame',message:e.message})}).finally(()=>{if(mine===token)handBusy=false});
+   }
+   if(now-lastReport>750){lastReport=now;report.live.phase=phase;report.live.presenceState=person.state(now);report.live.position={x:placement.position.x,y:placement.position.y,scale:placement.scale.x,targetScale:targetPlacement.scale,stage:sequence.stage,scaleGroup:'placement',motionGroupSeparate:true,framingSource:framing?.source??null,feetVisible:framing?.feetVisible??false};report.live.renderStats=renderStats();report.live.bodyMs=bodyTimes;report.live.handMs=handTimes;report.live.gestureProgress=gestureGate.progress;show();}
+   updateLiveStatus();requestAnimationFrame(loop);
+  };loop();show();$('#view').scrollIntoView({behavior:'smooth',block:'center'});
+ }catch(e){if(mine===token){report.errors.push({stage:'camera',message:e.message});stopLive();text('#liveStatus','Não foi possível iniciar: '+e.message);show()}}
+};
+$('#stop').onclick=stopLive;
+$('#restart').onclick=()=>{if(!live)return;epoch++;resetScene();phase='target';mustClear=false;compositor.clear();report.live.targetRecognized=false;report.live.exitTriggered=false;report.live.personLost=false;report.live.requiresTargetAgain=false;show()};
+$('#guides').onchange=()=>compositor?.drawGuides($('#guides').checked);
+for(const id of ['side','size'])$('#'+id).onchange=()=>{if(lastBodyData&&phase==='active')updatePlacement(lastBodyData)};
+$('#save').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));a.download='KIRA_resultados_navegador.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+function renderStats(){return {sampleFrames:frameTimes.length,averageFps:frameTimes.length?1000/(frameTimes.reduce((a,b)=>a+b,0)/frameTimes.length):null,maxFrameMs:frameTimes.length?Math.max(...frameTimes):null,targetFps:30}}
+window.addEventListener('pagehide',stopLive);window.addEventListener('error',e=>{report.errors.push({message:e.message});show()});show();
+
+async function runTest(name,fn){
+ if(live||testing)return;testing=true;$('#live').disabled=true;$('#stop').disabled=true;$('#restart').disabled=true;
+ try{await setupModels();front=false;await fn();}catch(e){report.errors.push({stage:name,message:e.message});status('Falha: '+e.message)}finally{demo=false;clearPose();testing=false;$('#live').disabled=false;$('#stop').disabled=false;$('#restart').disabled=false;show()}
+}
+function fixture(img,zoom=1){const c=canvas(),ctx=c.getContext('2d');ctx.fillStyle='#64616a';ctx.fillRect(0,0,W,H);const w=W*zoom,h=w*img.naturalHeight/img.naturalWidth;ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);return c}
+function sampleFrame(proof,label){renderer.render(scene,camera);const c=document.createElement('canvas');c.width=W;c.height=H+50;const ctx=c.getContext('2d');ctx.fillStyle='#202126';ctx.fillRect(0,0,W,H+50);ctx.fillStyle='white';ctx.font='21px system-ui';ctx.fillText(label,10,32);if(proof)ctx.drawImage(proof.layers[0],0,50,W,H);ctx.drawImage(renderer.domElement,0,50,W,H);if(proof){ctx.drawImage(proof.layers[1],0,50,W,H);ctx.drawImage(proof.layers[2],0,50,W,H)}$('#samples').appendChild(c);return c}
+async function settled(runner,c,clock,onFrame=()=>{}){let r;for(let i=0;i<5;i++){r?.bitmap.close();r=await runner.infer(c,clock+i*200);onFrame(r)}return r}
+$('#bodyTest').onclick=()=>runTest('body-test',async()=>{
+ let runner,proof;try{
+  status('Testando corpo, pés e saída da pessoa…');defaultCamera();resetScene();$('#view').classList.add('live');runner=new WorkerRunner('./body-worker.js?v=0.6');await runner.ready;const img=await loadImage('./pose.jpg');proof=new Compositor($('#view'),false);demo=true;armTarget(performance.now());
+  const rows=[];let clock=1000,lastFrame;
+  for(const zoom of [.8,1,1.3]){
+   const c=fixture(img,zoom),r=await settled(runner,c,clock,r=>acceptBody(r,performance.now()));clock+=1500;
+   // Each photo is processed by the real detector; the spatial result is then rendered.
+   if(!r.body.present)throw new Error('Corpo não detectado na foto '+zoom);
+   placement.position.set(targetPlacement.x,targetPlacement.y,0);placement.scale.setScalar(targetPlacement.scale);proof.paint(r);proof.drawGuides(true);sampleFrame(proof,'Corpo e pés · ampliação '+zoom);
+   rows.push({zoom,present:r.body.present,feetVisible:r.body.feetVisible,source:framing?.source,scale:placement.scale.x,targetScale:targetPlacement.scale,maskMean:r.mean});lastFrame=c;
+  }
+  const blank=canvas();blank.getContext('2d').fillStyle='#64616a';blank.getContext('2d').fillRect(0,0,W,H);let blankPresent=true;
+  for(let i=0;i<6;i++){const r=await runner.infer(blank,clock);clock+=200;blankPresent=r.body.present;proof.paint(r);acceptBody(r,performance.now());await sleep(100)}
+  await sleep(1400);sampleFrame(proof,'Pessoa saiu · Ryuk oculto');const loss={blankPresent,modelHidden:!placement.visible,requiresTargetAgain:phase==='target'&&mustClear};
+  const r=await settled(runner,lastFrame,clock+1000);proof.paint(r);acceptBody(r,performance.now());const returnedWithoutTarget=placement.visible;
+  report.tests.BODY={fixture:'Official MediaPipe pose.jpg; synthetic resizing, not physical distance',rows,scaleIncreases:rows[0].scale<rows[1].scale&&rows[1].scale<rows[2].scale,loss,returnedWithoutTarget,humanRedEyes:false};status('Teste corporal concluído. Confira pés, proporção e ocultação nas capturas.');
+ }finally{runner?.close();proof?.dispose();$('#view').classList.remove('live');placement.visible=false;demo=false;}
+});
+$('#sequenceTest').onclick=()=>runTest('sequence-test',async()=>{
+ let runner,proof;try{
+  status('Preparando sequência com foto…');defaultCamera();resetScene();runner=new WorkerRunner('./body-worker.js?v=0.6');await runner.ready;const img=await loadImage('./pose.jpg'),c=fixture(img,1),r=await settled(runner,c,1000);r.bitmap.close();if(!r.body.present)throw new Error('Corpo não encontrado na referência');
+  $('#view').classList.add('live');proof=new Compositor($('#view'),false);armTarget(performance.now());demo=true;person.update(r.body,performance.now());acceptBody(r,performance.now());const started=performance.now(),moments=[9.8,11.4,15.8,19.4],rows=[];let checkpoint=0;
+  while(performance.now()-started<20200){acceptBody(r,performance.now());const bitmap=await createImageBitmap(c);proof.paint({...r,bitmap});proof.drawGuides(false);const elapsed=(performance.now()-started)/1000;
+   if(checkpoint<moments.length&&elapsed>=moments[checkpoint]){sampleFrame(proof,elapsed.toFixed(1)+' s · '+sequence.stage);rows.push({elapsed,stage:sequence.stage,scale:placement.scale.x,targetScale:targetPlacement.scale,bodySource:framing?.source,feetVisible:framing?.feetVisible,motionY:motion.position.y});checkpoint++}
+   status('Sequência com foto · '+elapsed.toFixed(1)+' s · '+sequence.stage);await sleep(80);
+  }
+  report.tests.SEQUENCE={rows,sameScaleThroughFloat:rows.length===4&&Math.abs(rows[3].scale-rows[1].scale)<.01,humanRedEyes:false,renderStats:renderStats(),cameraTest:false};status('Sequência concluída. Escala do corpo separada da flutuação.');
+ }finally{runner?.close();proof?.dispose();$('#view').classList.remove('live');placement.visible=false;demo=false;}
+});
+$('#faceTest').onclick=()=>runTest('face-test',async()=>{
+ resetScene();$('#view').classList.add('live');placement.visible=true;placement.scale.setScalar(1);placement.position.set(0,0,0);motion.position.set(0,0,0);motion.rotation.set(0,0,0);camera.position.set(0,refs.headY+.08,1.15);camera.lookAt(0,refs.headY+.08,0);camera.aspect=.75;camera.updateProjectionMatrix();renderer.setSize(W,H);await sleep(100);sampleFrame(null,'Olhos e boca · materiais opacos');
+ const mats=[];model.traverse(o=>{if(o.isMesh)for(const m of Array.isArray(o.material)?o.material:[o.material])if(['RyukFace','Eye'].includes(m.name)&&!mats.some(x=>x.name===m.name))mats.push({name:m.name,transparent:m.transparent,depthWrite:m.depthWrite,normalScale:m.normalScale.toArray(),roughness:m.roughness})});report.tests.RYUK_FACE={materials:mats,allOpaque:mats.every(m=>!m.transparent&&m.depthWrite),texturesChanged:false};status('Rosto ampliado. Texturas originais preservadas; rosto e olhos opacos.');
+});
+$('#smoke').onclick=()=>runTest('smoke-test',async()=>{
+ defaultCamera();resetScene();placement.visible=true;placement.position.set(0,0,0);placement.scale.setScalar(1);phase='test';startExit('manual');await sleep(1100);sampleFrame(null,'Fumaça · 128 partículas');await sleep(1700);status('Fumaça concluída: personagem e partículas ocultos.');
+});
+$('#targetTest').onclick=()=>runTest('target-and-hand-test',async()=>{
+ let ctl,runner;try{
+  status('Testando alvo e punho…');await setupTarget();const img=await loadImage('./alvo_provisorio.png'),c=canvas(),ctx=c.getContext('2d');ctl=new Controller({inputWidth:W,inputHeight:H,warmupTolerance:0,missTolerance:1});await ctl.addImageTargets('./alvo_provisorio.mind');
+  const results=[];for(const filter of ['none','brightness(.5)','blur(2px)']){ctx.fillStyle='#888';ctx.fillRect(0,0,W,H);ctx.filter=filter;const h=540,w=h*img.naturalWidth/img.naturalHeight;ctx.drawImage(img,(W-w)/2,50,w,h);ctx.filter='none';const d=await ctl.detect(c),m=await ctl.match(d.featurePoints,0);results.push({filter,matched:!!m.modelViewTransform})}
+  let found=false,lost=false;ctl.onUpdate=d=>{if(d.type!=='updateMatrix')return;if(d.worldMatrix&&!found){found=true;setTimeout(()=>{ctx.fillStyle='#888';ctx.fillRect(0,0,W,H)},200)}else if(!d.worldMatrix&&found)lost=true};ctl.processVideo(c);const deadline=performance.now()+10000;while(!lost&&performance.now()<deadline)await sleep(100);ctl.stopProcessVideo();
+  runner=new WorkerRunner('./hand-worker.js?v=0.6');await runner.ready;const fist=await loadImage('./fist.jpg'),gate=new GestureGate();const began=performance.now();let fired=false,lastGesture=null,samples=0;
+  while(!fired&&performance.now()-began<4000){const r=await runner.infer(fist,performance.now());lastGesture=r.gesture;samples++;fired=gate.update(r.gesture,performance.now());if(!fired)await sleep(180)}
+  const negative=await runner.infer(await loadImage('./thumb_up.jpg'),performance.now());report.tests.TARGET_HAND={target:results,actualFoundEvent:found,actualLostEvent:lost,fist:lastGesture,heldFistConfirmed:fired,handSamples:samples,negativeGesture:negative.gesture};status('Alvo e confirmação do punho testados em arquivos.');
+ }finally{ctl?.dispose();runner?.close()}
+});
