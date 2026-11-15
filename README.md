@@ -1,9 +1,9 @@
-# KIRA — rosto refinado 1.4
+# KIRA — olhar alinhado 1.5
 
-Refinamento do estudo de geometria aprovado: olhos menores e recuados, sobrancelhas mais marcadas, maçãs do rosto e cavidades de bochecha. Queixo e transições suavizados em relação ao estudo 1.3 para reduzir o aspecto pontudo. Normais transformadas preservando quinas e UVs; topologia e rig do corpo mantidos.
+Correção binocular: as duas pupilas miram o mesmo ponto virtual a 4 m, calculado no referencial da cabeça. Cada controle compensa o eixo e a animação herdada do próprio olho. Amplitude horizontal reduzida para cerca de 6 graus de cada lado, com pausas e pequenas variações verticais.
 
-As pupilas continuam varrendo os lados, com pausas. Escala do olho e recuo aplicados igualmente aos seis clipes para evitar saltos. Capa, rastreamento corporal, pés, oclusão, gesto, fumaça e reservas permanecem da versão 1.2.
+Rosto, malhas, materiais, corpo, escala, capa, gesto, oclusão e fumaça preservados da versão 1.4. Apenas as trilhas de rotação dos controles Olhar_L e Olhar_R foram substituídas nos seis clipes. O ponto virtual é animado; não há detecção de objetos ou de atenção visual real.
 
-Ver olhar ao redor abre a prévia ampliada. GLB e USDZ reimportados e renderizados; ciclos, animações e escala conferidos. Nova aparência no iPad e reconhecimento da capa física ainda dependem de teste. Versão pública anterior preservada em versao-012.html. Estudo 1.3 preservado localmente.
+Conferências: direção geométrica das pupilas e convergência entre elas em todos os clipes; ciclos reimportados no Blender; medição das pupilas deformadas durante a sequência do navegador. Nova aparência no iPad e reconhecimento da impressão física ainda dependem do teste do usuário. Versão anterior em versao-014.html.
 
-USDZ contém modelo e animação de 8 s, sem os comportamentos do WebAR. Créditos em CREDITOS_RYUK.md; licenças nos arquivos existentes.
+USDZ contém o modelo e animação, sem os comportamentos do WebAR. Créditos e licenças preservados.
