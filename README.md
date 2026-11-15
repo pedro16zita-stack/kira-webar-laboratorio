@@ -1,13 +1,9 @@
-# KIRA — Ryuk articulado 0.8
+# KIRA — olhos do Ryuk 0.9
 
-Continuação da versão 0.7, preservada em versao-007.html. A mesma geometria, texturas, materiais e 79 ossos; animações de presença e caminhada refeitas no Blender.
+Olhos recuados 6 mm no modelo, mantendo-os visíveis, com menos relevo, menos emissão própria e brilho de superfície. Texturas originais e geometria preservadas. Material de córnea por clearcoat no GLB. Versão anterior preservada em versao-008.html.
 
-Asas com dobramento na raiz e atraso nos segmentos; braços, cotovelos, mãos e dedos; pernas e tornozelos durante a suspensão; cabeça e olhos com ritmos diferentes. Sem piscar ou deformar a boca: o modelo não tem um rig de pálpebras ou mandíbula. Transições e passos sincronizados preservados.
+Animações e rotação dos olhos iguais à versão 0.8. Somente a posição de repouso e as trilhas de translação dos olhos recebem o mesmo recuo para evitar saltos entre clipes. Rastreamento, escala, corpo, gesto e fumaça preservados.
 
-Use Ver animação sem câmera para a sequência, ou Conferir articulação para ver o corpo parado no espaço enquanto a malha se articula. O teste mede rotação local e deslocamento de vértices deformados no navegador.
+Botão Ver olhos de perto abre uma prévia ampliada e animada sem câmera. USDZ atualizado para teste no iPad. Texturas e materiais mantidos no arquivo, respeitando as capacidades do visualizador USD Preview Surface.
 
-Rastreamento, alvo, oclusão, escala corporal, gesto e fumaça de 128 partículas continuam nos módulos da 0.6. Não há reconhecimento de identidade nem rastreamento do piso. O alvo físico definitivo e o desempenho no aparelho exigem teste.
-
-USDZ atualizado: Ryuk_Articulado_v008_iPad.usdz, presença articulada de 8 s com texturas. Abra ipad.html no Safari para usar o visualizador da Apple. Esse modo não inclui caderno e gestos do WebAR.
-
-Créditos e licenças nos arquivos existentes. Os originais permanecem nas versões anteriores.
+Ensaios digitais e renderizações não substituem teste no celular com o cosplay e o caderno real. Créditos do modelo em CREDITOS_RYUK.md. Licenças nos arquivos existentes.
