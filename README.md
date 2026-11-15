@@ -1,4 +1,4 @@
-# KIRA — versão de apresentação 1.0
+# KIRA — versão de apresentação 1.1
 
 Modelo existente preservado, com íris e pupilas separadas em quatro malhas e dois controles adicionais de olhar (81 ossos). Pupilas se articulam independentemente dos globos. Animações do corpo da versão 0.8 e materiais da versão 0.9 reaproveitados.
 
@@ -11,3 +11,6 @@ Capa enviada compilada sem alterar a impressão: alvo da capa inteira e alvo da 
 Fluxo: escolha imagem, visual e câmera; inicie; apresente a capa; enquadre a pessoa; mantenha os pés visíveis quando possível; feche o punho inteiro por cerca de 1 s. Ao sair a pessoa, Ryuk é ocultado. Retire e reapresente a capa para repetir.
 
 O USDZ permite conferir modelo e animação no visualizador AR da Apple. Caderno, gesto, fumaça e filtro pertencem ao WebAR. Créditos do modelo em CREDITOS_RYUK.md; licenças preservadas.
+
+## Acabamento 1.1
+Olhar mais centrado, íris vermelha mais legível, pupila menor e material amarelo menos saturado. Curva de olhar suavizada com breves permanências. Luzes leves de preenchimento e contorno no WebAR, sem passes extras de renderização. Capa, rastreamento, escala, gesto e transições preservados. Versão 1.0 disponível em versao-010.html. Nova aparência no aparelho ainda precisa de conferência.
