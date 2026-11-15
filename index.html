@@ -11,14 +11,14 @@ body{margin:0;background:#121316;color:#eee;font:16px system-ui}main{max-width:1
 <p><button id="live">Iniciar teste com câmera</button><button id="stop">Parar câmera</button><button id="restart">Reiniciar reconhecimento</button></p>
 <p id="liveStatus" role="status">Mostre a imagem-alvo em outra tela ou imprima. Depois, inicie o teste e permita a câmera.</p>
 <p><a href="alvo_provisorio.png" target="_blank" rel="noopener">Abrir imagem-alvo provisória</a> · <a href="CREDITOS_RYUK.md">Créditos do modelo</a></p>
-<label><input type="checkbox" id="segment">Incluir segmentação no processamento (comparação de desempenho; máscara não aplicada ao vídeo)</label>
+<p>Depois do reconhecimento, enquadre a pessoa e a mão. A tela informará quando detectar rosto, palma aberta e punho. A oclusão em vídeo permanece desativada neste teste.</p>
 <div id="view"></div><video id="video" playsinline muted hidden></video>
-<p>Após Ryuk aparecer, retire a imagem-alvo. Mostre a palma aberta; depois feche a mão por pelo menos 0,7 s para testar a saída.</p>
+<p>Após Ryuk aparecer, retire a imagem-alvo e aponte a câmera para a pessoa. Mostre a palma aberta; depois feche a mão por pelo menos 0,7 s para testar a saída.</p>
 <p>Se mudar de câmera, toque em parar e inicie novamente. O primeiro carregamento usa internet e pode levar alguns instantes.</p>
 <button id="save">Baixar resultados do teste</button>
-<details><summary>Ensaios técnicos com imagens digitais</summary><p>Estes ensaios não abrem a câmera e não validam o caderno físico.</p><button id="run">Executar ensaios com arquivos</button><button id="smoke" disabled>Testar fumaça e saída</button><p id="status" role="status">Pronto para iniciar.</p><div id="samples"></div></details>
+<details><summary>Ensaios técnicos com imagens digitais</summary><p>Estes ensaios não abrem a câmera e não validam o caderno físico.</p><button id="run">Executar ensaios com arquivos</button><button id="smoke" disabled>Testar fumaça e saída</button><button id="workerTest">Testar reconhecimento em segundo plano</button><p id="status" role="status">Pronto para iniciar.</p><div id="samples"></div></details>
 <details><summary>Resultados e informações do aparelho</summary><pre id="results">Nenhum ensaio executado.</pre></details>
-<p>As imagens da câmera são processadas no aparelho. Este laboratório não grava nem envia o vídeo. Versão de teste 0.2.</p>
+<p>As imagens da câmera são processadas no aparelho. Este laboratório não grava nem envia o vídeo. Versão de teste 0.3.</p>
 </main>
 <script type="importmap">{"imports":{"three":"./three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
-<script type="module" src="lab.js"></script></html>
+<script type="module" src="lab.js?v=0.3"></script></html>
