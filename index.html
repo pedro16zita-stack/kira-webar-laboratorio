@@ -4,21 +4,23 @@
 <style>
 body{margin:0;background:#121316;color:#eee;font:16px system-ui}main{max-width:1100px;margin:auto;padding:24px}h1{font-size:28px}p{line-height:1.5;color:#bbb}button,a{font:inherit}button{background:#a51c30;color:white;border:0;border-radius:7px;padding:12px 18px;margin:4px;cursor:pointer}button:disabled{opacity:.4}a{color:#ed8999}#view{height:460px;max-width:720px;background:#25272e;border-radius:8px;overflow:hidden}canvas{max-width:100%}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#202126;padding:16px;max-height:450px;overflow:auto}#samples{display:flex;gap:10px;flex-wrap:wrap}#samples canvas{width:220px;height:auto}label{display:block;margin:14px 0}video{max-width:480px;width:100%}.warning{border-left:3px solid #dc4761;padding:10px 16px}
 #view.live{position:relative;aspect-ratio:3/4;height:auto;max-width:480px}#view.live>canvas{position:absolute;inset:0;width:100%!important;height:100%!important;z-index:2;pointer-events:none}#view.live>video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:1}select{font:inherit;max-width:100%;padding:10px;background:#24252a;color:white;border:1px solid #666;border-radius:6px}details{margin:18px 0;padding:12px;border:1px solid #555;border-radius:8px}button{min-height:44px}#view:not(.live) canvas{height:auto!important}
-</style>
+#view.live>canvas.cameraBackground{z-index:1}#view.live>canvas.personForeground{z-index:3}#view.live>canvas.handGuide{z-index:4}#samples #maskWorkerProof{width:min(480px,100%)}</style>
 <main><h1>KIRA · teste no navegador</h1>
-<p class="warning">Laboratório experimental. A imagem-alvo é provisória. Este teste não usa âncora no ambiente e ainda não aplica oclusão em vídeo.</p>
+<p class="warning">Laboratório experimental. A imagem-alvo é provisória. Este teste usa recorte da pessoa para ocultar Ryuk atrás dela. Não usa âncora no ambiente; a precisão e a velocidade dependem do aparelho.</p>
 <label for="camera">Câmera</label><select id="camera"><option value="environment">Traseira — outra pessoa filma</option><option value="user">Frontal — selfie</option></select>
 <p><button id="live">Iniciar teste com câmera</button><button id="stop">Parar câmera</button><button id="restart">Reiniciar reconhecimento</button></p>
 <p id="liveStatus" role="status">Mostre a imagem-alvo em outra tela ou imprima. Depois, inicie o teste e permita a câmera.</p>
 <p><a href="alvo_provisorio.png" target="_blank" rel="noopener">Abrir imagem-alvo provisória</a> · <a href="CREDITOS_RYUK.md">Créditos do modelo</a></p>
-<p>Depois do reconhecimento, enquadre a pessoa e a mão. A tela informará quando detectar rosto, palma aberta e punho. A oclusão em vídeo permanece desativada neste teste.</p>
-<div id="view"></div><video id="video" playsinline muted hidden></video>
-<p>Após Ryuk aparecer, retire a imagem-alvo e aponte a câmera para a pessoa. Mostre a palma aberta; depois feche a mão por pelo menos 0,7 s para testar a saída.</p>
+<p>Depois do reconhecimento, enquadre a pessoa e a mão. A tela informará quando detectar rosto e mão. Pontos verdes mostram a mão reconhecida. Mantenha o punho inteiro no enquadramento, bem iluminado.</p>
+<label for="side">Lado de Ryuk na tela</label><select id="side"><option value="auto">Automático — lado com mais espaço</option><option value="left">Esquerda</option><option value="right">Direita</option></select><label for="size">Tamanho de Ryuk</label><select id="size"><option value=".8">Menor — mais espaço para as asas</option><option value="1" selected>Grande</option><option value="1.2">Maior</option></select><div id="view"></div><video id="video" playsinline muted hidden></video>
+<p>Após Ryuk aparecer, retire a imagem-alvo e aponte a câmera para a pessoa. Feche a mão com os dedos voltados para a câmera e segure por cerca de 1 segundo. Não é necessário abrir a palma primeiro.</p>
 <p>Se mudar de câmera, toque em parar e inicie novamente. O primeiro carregamento usa internet e pode levar alguns instantes.</p>
 <button id="save">Baixar resultados do teste</button>
-<details><summary>Ensaios técnicos com imagens digitais</summary><p>Estes ensaios não abrem a câmera e não validam o caderno físico.</p><button id="run">Executar ensaios com arquivos</button><button id="smoke" disabled>Testar fumaça e saída</button><button id="workerTest">Testar reconhecimento em segundo plano</button><p id="status" role="status">Pronto para iniciar.</p><div id="samples"></div></details>
+<details><summary>Ensaios técnicos com imagens digitais</summary><p>Estes ensaios não abrem a câmera e não validam o caderno físico.</p><button id="run">Executar ensaios com arquivos</button><button id="smoke" disabled>Testar fumaça e saída</button><button id="occlusionTest">Testar recorte e posição com foto</button><button id="workerTest">Testar reconhecimento em segundo plano</button><p id="status" role="status">Pronto para iniciar.</p><div id="samples"></div></details>
 <details><summary>Resultados e informações do aparelho</summary><pre id="results">Nenhum ensaio executado.</pre></details>
-<p>As imagens da câmera são processadas no aparelho. Este laboratório não grava nem envia o vídeo. Versão de teste 0.3.</p>
+<p>As imagens da câmera são processadas no aparelho. Este laboratório não grava nem envia o vídeo. Versão de teste 0.4.</p>
 </main>
 <script type="importmap">{"imports":{"three":"./three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
-<script type="module" src="lab.js?v=0.3"></script></html>
+<script type="module" src="lab.js?v=0.4"></script></html>
+
+

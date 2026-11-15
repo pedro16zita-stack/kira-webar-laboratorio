@@ -1,11 +1,11 @@
-import {GestureGate} from './gesture-gate.js';
+import {GestureGate} from './gesture-gate.js?v=0.4';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FilesetResolver, GestureRecognizer, FaceLandmarker, ImageSegmenter } from './vision_bundle.mjs';
 
-const $=s=>document.querySelector(s), report={versions:{mindar:'1.2.5',three:THREE.REVISION,mediapipe:'0.10.21',lab:'0.3'},environment:{userAgent:navigator.userAgent,secureContext:window.isSecureContext},tests:{},errors:[]};
+const $=s=>document.querySelector(s), report={versions:{mindar:'1.2.5',three:THREE.REVISION,mediapipe:'0.10.21',lab:'0.4'},environment:{userAgent:navigator.userAgent,secureContext:window.isSecureContext},tests:{},errors:[]};
 let model,mixer,scene,camera,renderer,gesture,face,segmenter,Controller,controller,liveStream,liveBusy=false,liveRunning=false;
-let followTargetX=.35,currentClip='02_Suspensao',exitTrigger='manual';
+let followTargetX=.35,followSide=null,currentClip='02_Suspensao',exitTrigger='manual';
 let appearing=false,latched=false,smokeStart=null,smokePoints,modelStart=0,modelElapsed=0,entryAction,idleAction;
 const status=t=>{$('#status').textContent=t}, output=()=>{$('#results').textContent=JSON.stringify(report,null,2)};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -68,7 +68,7 @@ async function testVision(){
  report.tests.D.staticComposite=true;report.tests.D.status='Composição de silhueta sobre renderização Three.js executada; avaliar captura. Oclusão em vídeo NÃO TESTADA';
  });
  const shifts=[];for(const x of [-90,90]){const c=document.createElement('canvas');c.width=640;c.height=480;const ctx=c.getContext('2d');ctx.fillStyle='#777';ctx.fillRect(0,0,640,480);ctx.drawImage(portrait,x,0,640,480);const f=face.detect(c);shifts.push({imageShiftPixels:x,faces:f.faceLandmarks.length,noseX:f.faceLandmarks[0]?.[1]?.x??null})}report.tests.C.syntheticMotion=shifts;
- const rows=[];for(const [label,img] of [['Closed_Fist',fist],['Thumb_Up',thumb],['Sem mão de referência',portrait]]){t=performance.now();const g=gesture.recognize(img);rows.push({reference:label,prediction:g.gestures[0]?.[0]??null,ms:performance.now()-t})}report.tests.E={status:'Classificação de imagens; gesto ao vivo, falsos positivos e mão cortada NÃO TESTADOS',results:rows,proposedHoldMs:700};
+ const rows=[];for(const [label,img] of [['Closed_Fist',fist],['Thumb_Up',thumb],['Sem mão de referência',portrait]]){t=performance.now();const g=gesture.recognize(img);rows.push({reference:label,prediction:g.gestures[0]?.[0]??null,ms:performance.now()-t})}report.tests.E={status:'Classificação de imagens; gesto ao vivo, falsos positivos e mão cortada NÃO TESTADOS',results:rows,proposedHoldMs:900};
  // Shared HTMLCanvasElement proves interoperability of inputs; it does not prove camera sharing performance.
  const canvas=document.createElement('canvas');canvas.width=640;canvas.height=480;canvas.getContext('2d').drawImage(portrait,0,0,640,480);const timings=[];
  await setupMindar();const sharedController=new Controller({inputWidth:640,inputHeight:480});await sharedController.addImageTargets('./alvo_provisorio.mind');
@@ -81,11 +81,11 @@ async function testVision(){
  const vc=new Controller({inputWidth:640,inputHeight:480});await vc.addImageTargets('./alvo_provisorio.mind');const vf=await vc.detect(video),ff=face.detect(video),gg=gesture.recognize(video),ss=segmentation(video,false);renderer.render(scene,camera);report.tests.INTEGRACAO.syntheticVideo={tracks:stream.getVideoTracks().length,targetFeatures:vf.featurePoints.length,faces:ff.faceLandmarks.length,gesture:gg.gestures[0]?.[0]?.categoryName??null,segmentationMean:ss.mean,input:'Mesmo HTMLVideoElement de canvas.captureStream, não é câmera física'};vc.dispose();stream.getTracks().forEach(t=>t.stop());video.srcObject=null;
 }
 $('#run').onclick=async()=>{if(liveRunning||$('#live').disabled)return;$('#run').disabled=true;try{await setupModels();await testA();await persist();await testVision();status('Ensaios concluídos. Os resultados abaixo são do computador, com imagens digitais.')}catch(e){report.errors.push({message:e.message,stack:e.stack});status('Ensaio interrompido: '+e.message)}finally{await persist();$('#run').disabled=false}};
-$('#smoke').onclick=()=>{if(liveRunning||$('#live').disabled)return;exitTrigger='manual';restoreOpacity();model.visible=true;smokePoints.position.copy(model.position);smokeStart=performance.now();status('F: fumaça com 64 partículas e desaparecimento sincronizado (teste visual).')};
+$('#smoke').onclick=()=>{if(liveRunning||$('#live').disabled)return;exitTrigger='manual';restoreOpacity();model.visible=true;smokePoints.position.copy(model.position);smokePoints.scale.copy(model.scale);smokeStart=performance.now();status('F: fumaça com 64 partículas e desaparecimento sincronizado (teste visual).')};
 $('#save').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));a.download='KIRA_resultados_navegador.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
 class VisionRunner {
- constructor(){
-  this.worker=new Worker(new URL('./vision-worker.js',import.meta.url));this.id=0;this.pending=new Map();
+ constructor(file='./vision-worker.js?v=0.4'){
+  this.worker=new Worker(new URL(file,import.meta.url));this.id=0;this.pending=new Map();
   this.ready=new Promise((resolve,reject)=>{this.resolveReady=resolve;this.rejectReady=reject;this.timer=setTimeout(()=>reject(new Error('Tempo excedido ao carregar reconhecimento em segundo plano')),45000)});
   this.worker.onmessage=({data:d})=>{if(d.type==='ready'){clearTimeout(this.timer);this.resolveReady();return}if(d.type==='error'&&!d.id){clearTimeout(this.timer);this.rejectReady(new Error(d.message));return}const p=this.pending.get(d.id);if(p){this.pending.delete(d.id);d.type==='error'?p.reject(new Error(d.message)):p.resolve(d)}};
   this.worker.onerror=e=>{clearTimeout(this.timer);const error=new Error(e.message||'Reconhecimento em segundo plano indisponível');this.rejectReady(error);for(const p of this.pending.values())p.reject(error);this.pending.clear()};
@@ -94,25 +94,26 @@ class VisionRunner {
  async infer(source,kind,timestamp){await this.ready;const bitmap=await createImageBitmap(source),id=++this.id;return new Promise((resolve,reject)=>{this.pending.set(id,{resolve,reject});this.worker.postMessage({type:'infer',id,kind,timestamp,bitmap},[bitmap])})}
  close(){clearTimeout(this.timer);for(const p of this.pending.values())p.reject(new Error('Teste encerrado'));this.pending.clear();this.worker.terminate()}
 }
-let liveToken=0,liveController=null,liveVision=null,exited=false,gate=new GestureGate(),resetEpoch=0;
+let liveToken=0,liveController=null,liveVision=null,liveMask=null,compositor=null,maskBusy=false,maskLast=0,maskCapture=null,exited=false,gate=new GestureGate(),resetEpoch=0;
 function stopLive(){
- liveToken++;liveRunning=false;liveStream?.getTracks().forEach(t=>t.stop());liveVision?.close();liveVision=null;
+ liveToken++;liveRunning=false;liveMask?.close();liveMask=null;compositor?.dispose();compositor=null;maskBusy=false;liveStream?.getTracks().forEach(t=>t.stop());liveVision?.close();liveVision=null;
  const oldController=liveController;liveController=null;if(oldController)setTimeout(()=>oldController.dispose(),500);
  const v=$('#video');v.srcObject=null;v.hidden=true;$('#live').disabled=false;$('#camera').disabled=false;$('#run').disabled=false;$('#smoke').disabled=!model;
  $('#liveStatus').textContent='Câmera desligada';if(report.live){report.live.endedAt=new Date().toISOString();output()}
 }
 function drawCover(video,ctx){const w=ctx.canvas.width,h=ctx.canvas.height,scale=Math.max(w/video.videoWidth,h/video.videoHeight),sw=w/scale,sh=h/scale;ctx.drawImage(video,(video.videoWidth-sw)/2,(video.videoHeight-sh)/2,sw,sh,0,0,w,h)}
-function startExit(){if(exited)return;exited=true;exitTrigger='gesture';smokePoints.position.copy(model.position);smokeStart=performance.now();report.live.exitTriggered=true;report.live.exitAt=new Date().toISOString()}
+function startExit(){if(exited)return;exited=true;exitTrigger='gesture';smokePoints.position.copy(model.position);smokePoints.scale.copy(model.scale);smokeStart=performance.now();report.live.exitTriggered=true;report.live.exitAt=new Date().toISOString()}
 function liveMessage(){
  if(exited)return 'Saída por gesto acionada. Toque em reiniciar para repetir.';
  if(!latched)return 'Aponte para a imagem-alvo inteira, sem reflexos.';
  const r=report.live;
+ if(r.occlusionPending)return 'Preparando recorte da pessoa…';
  if(!r.visionReady)return 'Ryuk ativado. Preparando reconhecimento da pessoa e da mão…';
- const faceText=r.faceSeen?'Rosto detectado.':'Enquadre o rosto para Ryuk acompanhar você.';
- if(!r.handSeen)return faceText+' Mostre a mão inteira, com a palma aberta.';
- if(!gate.armed)return faceText+' Abra a palma para preparar a saída.';
+ const faceText=(r.maskFailed?'Recorte indisponível: usando apenas posição lateral. ':'')+(r.faceSeen?'Rosto detectado.':'Enquadre o rosto para Ryuk acompanhar você.');
+ if(!r.handSeen)return faceText+' Mão não detectada: enquadre pulso e dedos, de frente para a câmera.';
+ if(!gate.armed)return faceText+' Mão detectada. Feche o punho e segure por 1 segundo.';
  if(r.gesture?.name==='Closed_Fist')return faceText+' Mão fechada: '+Math.round(gate.progress*100)+'%. Segure até confirmar.';
- return faceText+' Saída preparada. Feche a mão e segure até confirmar.';
+ return faceText+' Mão detectada. Feche a mão e segure até confirmar.';
 }
 $('#live').onclick=async()=>{
  if(liveRunning||$('#live').disabled)return;
@@ -124,10 +125,11 @@ $('#live').onclick=async()=>{
   if(token!==liveToken){liveStream.getTracks().forEach(t=>t.stop());return}
   v.srcObject=liveStream;await v.play();v.hidden=false;v.style.transform=front?'scaleX(-1)':'none';renderer.domElement.style.transform=front?'scaleX(-1)':'none';
   $('#view').appendChild(v);$('#view').classList.add('live');renderer.setSize(480,640);camera.aspect=.75;camera.updateProjectionMatrix();
-  model.position.set(.35,0,0);followTargetX=.35;restoreOpacity();smokeStart=null;smokePoints.visible=false;liveRunning=true;latched=false;exited=false;gate.reset();
+  model.position.set(.7,.12,0);model.scale.setScalar(Number($("#size").value));followTargetX=.7;restoreOpacity();model.visible=false;smokeStart=null;smokePoints.visible=false;liveRunning=true;followSide=null;latched=false;exited=false;gate.reset();
   const c=document.createElement('canvas');c.width=480;c.height=640;const ctx=c.getContext('2d');let heldJob=false,lastScan=0,lastVision=0,kindIndex=0,visionStarting=false,epoch=++resetEpoch;
   const ctl=new Controller({inputWidth:480,inputHeight:640});liveController=ctl;await ctl.addImageTargets('./alvo_provisorio.mind');
-  report.live={startedAt:new Date().toISOString(),camera:front?'frontal':'traseira',videoSize:[v.videoWidth,v.videoHeight],tracks:liveStream.getVideoTracks().length,detected:false,exitTriggered:false,cycles:0,processingMs:[],workerMs:[],faceSeen:false,handSeen:false,faceDetections:0,handDetections:0,gesture:null,visionReady:false,backend:'loading',worldAnchor:false,occlusionApplied:false};output();
+  report.live={startedAt:new Date().toISOString(),camera:front?'frontal':'traseira',videoSize:[v.videoWidth,v.videoHeight],tracks:liveStream.getVideoTracks().length,detected:false,exitTriggered:false,cycles:0,processingMs:[],workerMs:[],faceSeen:false,handSeen:false,faceDetections:0,handDetections:0,gesture:null,visionReady:false,backend:'loading',worldAnchor:false,occlusionApplied:false,occlusionPending:false,maskFrames:0,maskMs:[],handSamples:0,closedFistSamples:0};output();
+  compositor=new PersonCompositor(front);maskCapture=document.createElement('canvas');maskCapture.width=480;maskCapture.height=640;maskLast=0;maskBusy=false;
   const initVision=async()=>{
    if(visionStarting)return;visionStarting=true;const runner=new VisionRunner();liveVision=runner;
    try{await runner.ready;if(token!==liveToken)return;report.live.visionReady=true;report.live.backend='worker';}
@@ -136,33 +138,33 @@ $('#live').onclick=async()=>{
   };
   const loop=async()=>{
    if(!liveRunning||token!==liveToken)return;
-   const now=performance.now();$('#liveStatus').textContent=liveMessage();
+   const now=performance.now();updateMask(v,token,now);$('#liveStatus').textContent=liveMessage();
    if(!heldJob&&v.readyState>=2){
     if(!latched&&now-lastScan>=250){
      heldJob=true;lastScan=now;const started=performance.now();
-     try{drawCover(v,ctx);const d=await ctl.detect(c),m=await ctl.match(d.featurePoints,0);if(token!==liveToken)return;if(m.modelViewTransform){reveal();report.live.detected=true;report.live.detectedAt=new Date().toISOString();initVision().catch(e=>{report.errors.push({stage:'vision-init',message:e.message});output()})}}
+     try{drawCover(v,ctx);const d=await ctl.detect(c),m=await ctl.match(d.featurePoints,0);if(token!==liveToken)return;if(m.modelViewTransform){latched=true;model.visible=false;report.live.occlusionPending=true;initMask(token);report.live.detected=true;report.live.detectedAt=new Date().toISOString();initVision().catch(e=>{report.errors.push({stage:'vision-init',message:e.message});output()})}}
      catch(e){if(token===liveToken)report.errors.push({stage:'target',message:e.message})}finally{heldJob=false;report.live.processingMs.push(performance.now()-started);}
     }else if(latched&&!exited&&report.live.visionReady&&now-lastVision>=(report.live.backend==='worker'?140:350)){
      heldJob=true;lastVision=now;drawCover(v,ctx);const kind=(kindIndex++%2===0)?'face':'gesture',started=performance.now(),jobEpoch=resetEpoch;
      try{
-      let r;if(liveVision)r=await liveVision.infer(c,kind,now);else if(kind==='face'){const f=face.detect(c);r={faceSeen:!!f.faceLandmarks[0],nose:f.faceLandmarks[0]?.[1]??null}}else{const g=gesture.recognize(c),p=g.gestures[0]?.[0];r={handSeen:g.landmarks.length>0,gesture:p?{name:p.categoryName,score:p.score}:null}}
+      let r;if(liveVision)r=await liveVision.infer(c,kind,now);else if(kind==='face'){const f=face.detect(c);r={faceSeen:!!f.faceLandmarks[0],nose:f.faceLandmarks[0]?.[1]??null}}else{const g=gesture.recognize(c),p=g.gestures[0]?.[0];r={handSeen:g.landmarks.length>0,gesture:p?{name:p.categoryName,score:p.score}:null,points:g.landmarks[0]??[]}}
       if(token!==liveToken)return;
       if(jobEpoch===resetEpoch){
-      if(kind==='face'){report.live.faceSeen=r.faceSeen;if(r.nose){report.live.faceDetections++;followTargetX=Math.max(-.4,Math.min(.5,(r.nose.x-.5)*1.2+.3));}}
-      else{report.live.handSeen=r.handSeen;report.live.gesture=r.gesture;report.live.handDetections+=r.handSeen?1:0;if(gate.update(r.gesture,performance.now()))startExit();report.live.gestureArmed=gate.armed;report.live.gestureProgress=gate.progress;}
+      if(kind==='face'){report.live.faceSeen=r.faceSeen;if(r.nose){report.live.faceDetections++;followTargetX=sidePosition(r.nose.x,r.box,front);}}
+      else{report.live.handSamples++;report.live.closedFistSamples+=r.gesture?.name==='Closed_Fist'?1:0;compositor?.drawHand(r.points??[]);report.live.handSeen=r.handSeen;report.live.gesture=r.gesture;report.live.handDetections+=r.handSeen?1:0;if(!report.live.occlusionPending&&gate.update(r.gesture,performance.now()))startExit();report.live.gestureArmed=gate.armed;report.live.gestureProgress=gate.progress;}
       }
       const elapsed=performance.now()-started;report.live.workerMs.push({kind,ms:elapsed});if(report.live.workerMs.length>120)report.live.workerMs.shift();
      }catch(e){if(token===liveToken)report.errors.push({stage:'vision',message:e.message})}finally{heldJob=false;}
     }
    }
    report.live.cycles++;if(report.live.processingMs.length>120)report.live.processingMs.shift();
-   if(report.live.cycles%30===0){report.live.animation={clip:currentClip,time:(currentClip==='01_Manifestacao'?entryAction:idleAction).time,playing:(currentClip==='01_Manifestacao'?entryAction:idleAction).isRunning()};output()}
+   if(report.live.cycles%30===0){report.live.position={x:model.position.x,scale:model.scale.x,side:$('#side').value};report.live.animation={clip:currentClip,time:(currentClip==='01_Manifestacao'?entryAction:idleAction).time,playing:(currentClip==='01_Manifestacao'?entryAction:idleAction).isRunning()};output()}
    if(liveRunning&&token===liveToken)requestAnimationFrame(loop);
   };loop();$('#view').scrollIntoView({behavior:'smooth',block:'center'});
  }catch(e){stopLive();$('#liveStatus').textContent=e.name==='NotAllowedError'?'Permita a câmera e toque em iniciar.':'Não foi possível iniciar: '+e.message;report.errors.push({stage:'camera',message:e.message});output()}
 };
 $('#stop').onclick=stopLive;
-$('#restart').onclick=()=>{if(!liveRunning)return;resetEpoch++;gate.reset();exited=false;latched=false;if(report.live){report.live.detected=false;report.live.exitTriggered=false;report.live.gesture=null;report.live.handSeen=false;report.live.faceSeen=false;report.live.gestureArmed=false;}model.visible=false;model.position.set(.35,0,0);followTargetX=.35;restoreOpacity();smokeStart=null;smokePoints.visible=false;$('#liveStatus').textContent='Reiniciado. Apresente a imagem-alvo novamente.'};
+$('#restart').onclick=()=>{if(!liveRunning)return;resetEpoch++;gate.reset();exited=false;latched=false;if(report.live){report.live.detected=false;report.live.exitTriggered=false;report.live.gesture=null;report.live.handSeen=false;report.live.faceSeen=false;report.live.gestureArmed=false;report.live.occlusionPending=false;compositor?.drawHand([]);}model.visible=false;model.position.set(.7,.12,0);model.scale.setScalar(Number($("#size").value));followTargetX=.7;restoreOpacity();smokeStart=null;smokePoints.visible=false;$('#liveStatus').textContent='Reiniciado. Apresente a imagem-alvo novamente.'};
 $('#workerTest').onclick=async()=>{
  if(liveRunning||$('#live').disabled)return;$('#workerTest').disabled=true;let runner;
  try{status('Testando reconhecimento em segundo plano…');runner=new VisionRunner();await runner.ready;const fist=await image('./fist.jpg'),portrait=await image('./portrait.jpg');
@@ -173,3 +175,68 @@ window.addEventListener('pagehide',stopLive);
 
 window.addEventListener('error',e=>{report.errors.push({message:e.message});output()});
 output();
+
+// The background and person foreground use the SAME captured frame and mask.
+// This prevents a stale silhouette being painted over a newer video frame.
+class PersonCompositor {
+ constructor(front){
+  this.layers=['cameraBackground','personForeground','handGuide'].map(name=>{const c=document.createElement('canvas');c.width=480;c.height=640;c.className=name;c.style.transform=front?'scaleX(-1)':'none';$('#view').appendChild(c);return c});
+  this.matte=document.createElement('canvas');
+ }
+ paint(r){
+  const [bg,fg]=this.layers,bc=bg.getContext('2d'),fc=fg.getContext('2d');
+  bc.clearRect(0,0,480,640);bc.drawImage(r.bitmap,0,0,480,640);
+  const m=this.matte;m.width=r.width;m.height=r.height;const mc=m.getContext('2d'),im=mc.createImageData(r.width,r.height);
+  for(let i=0;i<r.alpha.length;i++){im.data[i*4]=im.data[i*4+1]=im.data[i*4+2]=255;im.data[i*4+3]=r.alpha[i]}mc.putImageData(im,0,0);
+  fc.globalCompositeOperation='source-over';fc.clearRect(0,0,480,640);fc.drawImage(r.bitmap,0,0,480,640);fc.globalCompositeOperation='destination-in';fc.drawImage(m,0,0,480,640);fc.globalCompositeOperation='source-over';r.bitmap.close();
+ }
+ drawHand(points){const ctx=this.layers[2].getContext('2d');ctx.clearRect(0,0,480,640);ctx.fillStyle='#63ffb1';for(const p of points){ctx.beginPath();ctx.arc(p.x*480,p.y*640,3,0,Math.PI*2);ctx.fill()}}
+ dispose(){for(const c of this.layers)c.remove()}
+}
+function sidePosition(nose,box,front){
+ const choice=$('#side').value,center=box?(box.left+box.right)/2:nose;
+ // Choice is in screen space; all camera layers are mirrored together for selfie.
+ if(followSide===null)followSide=center<=.5?1:-1;
+ if(center<.38)followSide=1;else if(center>.62)followSide=-1;
+ const direction=choice==='auto'?followSide:((choice==='right')!==front?1:-1);
+ const offset=Math.max(.27,(box?box.right-box.left:.16)*.6+.18);
+ const x=Math.max(.18,Math.min(.82,center+direction*offset));
+ const width=2*camera.position.z*Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.aspect;
+ return (x-.5)*width;
+}
+async function initMask(token){
+ if(liveMask)return;
+ const runner=new VisionRunner('./mask-worker.js?v=0.4');liveMask=runner;
+ try{await runner.ready;if(token!==liveToken)return;report.live.maskReady=true;}
+ catch(e){runner.close();if(token!==liveToken)return;liveMask=null;report.live.maskFailed=true;report.live.occlusionPending=false;report.errors.push({stage:'person-mask',message:e.message});reveal();output()}
+}
+function updateMask(video,token,now){
+ if(!latched||!liveMask||!report.live.maskReady||maskBusy||now-maskLast<100)return;
+ maskBusy=true;maskLast=now;const epoch=resetEpoch,runner=liveMask;
+ drawCover(video,maskCapture.getContext('2d'));
+ runner.infer(maskCapture,'mask',now).then(r=>{
+  if(token!==liveToken||epoch!==resetEpoch){r.bitmap?.close();return}
+  compositor.paint(r);report.live.occlusionApplied=true;report.live.maskFrames++;report.live.maskMean=r.mean;report.live.maskMs.push(r.ms);if(report.live.maskMs.length>60)report.live.maskMs.shift();
+  if(report.live.occlusionPending){report.live.occlusionPending=false;reveal()}
+ }).catch(e=>{if(token===liveToken){report.errors.push({stage:'mask-frame',message:e.message});report.live.occlusionApplied=false;report.live.occlusionPending=false;report.live.maskFailed=true;runner.close();liveMask=null;compositor?.dispose();compositor=null;reveal();output()}}).finally(()=>{if(token===liveToken)maskBusy=false});
+}
+$('#occlusionTest').onclick=async()=>{
+ if(liveRunning||$('#live').disabled)return;$('#occlusionTest').disabled=true;let runner,proof;
+ try{
+  status('Testando recorte em segundo plano e composição sobre o personagem…');await setupModels();
+  runner=new VisionRunner('./mask-worker.js?v=0.4');await runner.ready;
+  const portrait=await image('./portrait.jpg');const c=document.createElement('canvas');c.width=480;c.height=640;c.getContext('2d').drawImage(portrait,0,0,480,640);
+  const frames=[];proof=new PersonCompositor(false);
+  $('#view').classList.add('live');renderer.setSize(480,640);camera.aspect=.75;camera.updateProjectionMatrix();model.position.set(.84,.12,0);model.scale.setScalar(Number($("#size").value));restoreOpacity();model.visible=true;idleAction.reset().play();entryAction.stop();
+  for(let i=0;i<5;i++){const r=await runner.infer(c,'mask',1000+i*200);frames.push({ms:r.ms,mean:r.mean});proof.paint(r)}
+  report.tests.LIVE_MASK_WORKER={status:'Cinco quadros de foto processados pelo mesmo worker e compositor usados na câmera; celular NÃO VALIDADO',frames,layers:proof.layers.map(c=>c.className),modelVisible:model.visible};
+  // Keep the proof in samples; restore main viewport for subsequent camera use.
+  renderer.render(scene,camera);const sample=document.createElement('canvas');sample.id='maskWorkerProof';sample.width=480;sample.height=640;const ctx=sample.getContext('2d');ctx.drawImage(proof.layers[0],0,0);ctx.drawImage(renderer.domElement,0,0);ctx.drawImage(proof.layers[1],0,0);$('#samples').appendChild(sample);
+  status('Recorte e posição processados sobre foto. Ainda é necessário testar a câmera no celular.');
+ }catch(e){report.errors.push({stage:'mask-test',message:e.message});status('Falha no recorte: '+e.message)}
+ finally{runner?.close();proof?.dispose();$('#view').classList.remove('live');if(renderer){renderer.setSize(720,460);camera.aspect=720/460;camera.updateProjectionMatrix();model.position.set(0,0,0);model.scale.setScalar(1)}$('#occlusionTest').disabled=false;output()}
+};
+
+
+$('#size').onchange=()=>{if(liveRunning&&model)model.scale.setScalar(Number($('#size').value))};
+
