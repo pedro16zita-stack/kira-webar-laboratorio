@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FilesetResolver, GestureRecognizer, FaceLandmarker, ImageSegmenter } from './vision_bundle.mjs';
 
-const $=s=>document.querySelector(s), report={versions:{mindar:'1.2.5',three:THREE.REVISION,mediapipe:'0.10.21',lab:'0.5'},environment:{userAgent:navigator.userAgent,secureContext:window.isSecureContext},tests:{},errors:[]};
+const $=s=>document.querySelector(s), report={versions:{mindar:'1.2.5',three:THREE.REVISION,mediapipe:'0.10.21',lab:'0.5.1'},environment:{userAgent:navigator.userAgent,secureContext:window.isSecureContext},tests:{},errors:[]};
 let model,mixer,scene,camera,renderer,gesture,face,segmenter,Controller,controller,liveStream,liveBusy=false,liveRunning=false;
 let followTargetScale=1,followTargetHeadY=.32,assetHeadY=2.2,assetHeadHeight=.3,currentHeadY=.32,lastFaceBox=null;
 let followTargetX=.35,followSide=null,currentClip='02_Suspensao',exitTrigger='manual';
@@ -36,7 +36,7 @@ function makeRenderer(){
    model.position.y=rootYForHead(currentHeadY-sequenceState.lift,next,assetHeadY,camera.position.y,height);
    const yaw=sequenceState.stage==='caminhada'?sequenceState.yaw:-followDirection*.45*sequenceState.eyes;model.rotation.y+=(yaw-model.rotation.y)*a;
    applyWalk(elapsed-10,sequenceState.walk);
-   if(sequenceState.stage==='encarar'||sequenceState.stage==='flutuacao'){const head=model.getObjectByName('bip_head');if(head){const q=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-followDirection*.22);head.quaternion.multiply(q);walkApplied.push({bone:head,q})}}
+   if(sequenceState.stage==='encarar'||sequenceState.stage==='flutuacao'){const head=model.getObjectByName('bip_head');if(head){const q=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-followDirection*.22*THREE.MathUtils.smoothstep(elapsed,15,15.7));head.quaternion.multiply(q);walkApplied.push({bone:head,q})}}
   }
   if(smokeStart!==null){const u=Math.min((now-smokeStart)/2600,1);smokePoints.visible=u<1;smokePoints.material.opacity=Math.sin(Math.PI*u)*.95;smokePoints.material.size=(.65+.7*u)*smokePoints.scale.x;
    const p=smokePoints.geometry.attributes.position;for(let i=0;i<64;i++){const angle=i*2.39996+u*.7,r=(.2+.55*Math.sin(i*4.3)**2)*(1+u*.7);p.setXYZ(i,Math.cos(angle)*r+.12*Math.sin(i+u*3),(i/63)*2.5+u*.45,Math.sin(angle)*r)}p.needsUpdate=true;
