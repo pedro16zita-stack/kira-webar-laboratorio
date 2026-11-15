@@ -1,31 +1,13 @@
-# KIRA — animação natural 0.7
+# KIRA — Ryuk articulado 0.8
 
-Experiência WebAR do TCC KIRA. Modelo, materiais e rastreamento existentes reaproveitados. O alvo continua provisório. A câmera não é gravada nem enviada a um servidor.
+Continuação da versão 0.7, preservada em versao-007.html. A mesma geometria, texturas, materiais e 79 ossos; animações de presença e caminhada refeitas no Blender.
 
-## Novidades
+Asas com dobramento na raiz e atraso nos segmentos; braços, cotovelos, mãos e dedos; pernas e tornozelos durante a suspensão; cabeça e olhos com ritmos diferentes. Sem piscar ou deformar a boca: o modelo não tem um rig de pálpebras ou mandíbula. Transições e passos sincronizados preservados.
 
-- Quatro clipes novos criados no Blender: presença suave, olhar para cada lado e caminhada calma. Os dois clipes originais continuam no GLB.
-- Ciclos de presença de 8 s com movimentos pequenos de cabeça, torso, asas e acessórios; mistura gradual entre poses.
-- Caminhada de 5 s: as pernas acompanham a distância percorrida e o corpo se vira na direção do movimento. A amplitude lateral diminui se faltar espaço no enquadramento.
-- Espaço Próximo / Equilibrado / Afastado, proporcional ao corpo. Não é medição em metros.
-- Movimento Suave permite até 60 quadros/s; Econômico limita a 30. O desempenho real fica no JSON e depende do aparelho.
-- Botão Ver animação sem câmera: prévia de 20 s com foto, sem validar rastreamento físico.
-- Comparação com a versão 0.6 preservada em versao-006.html.
+Use Ver animação sem câmera para a sequência, ou Conferir articulação para ver o corpo parado no espaço enquanto a malha se articula. O teste mede rotação local e deslocamento de vértices deformados no navegador.
 
-## Fluxo preservado
+Rastreamento, alvo, oclusão, escala corporal, gesto e fumaça de 128 partículas continuam nos módulos da 0.6. Não há reconhecimento de identidade nem rastreamento do piso. O alvo físico definitivo e o desempenho no aparelho exigem teste.
 
-1. Abra por QR Code ou link HTTPS e permita a câmera.
-2. Mostre o caderno/alvo e depois enquadre a pessoa. O corpo mantém Ryuk na composição e os pés dão referência vertical quando detectados.
-3. Observe presença, passos, olhar e flutuação. Ajuste o espaço lateral.
-4. Feche o punho inteiro por cerca de 1 s para acionar a fumaça de 128 partículas.
-5. Ao perder a pessoa, Ryuk é ocultado. Após encerrar a sessão, retire e apresente o alvo novamente.
+USDZ atualizado: Ryuk_Articulado_v008_iPad.usdz, presença articulada de 8 s com texturas. Abra ipad.html no Safari para usar o visualizador da Apple. Esse modo não inclui caderno e gestos do WebAR.
 
-Rastreamento corporal, oclusão, confirmação do punho e encerramento por perda usam os mesmos módulos da versão 0.6. Não há reconhecimento de identidade nem reconstrução do piso em 3D. A caminhada não garante contato exato com o chão real. Os olhos vermelhos da pessoa continuam retirados.
-
-O GLB acrescenta animações ao modelo anterior, preservando integralmente o prefixo binário, a geometria e as texturas. Os originais permanecem nas versões anteriores. A cadência da câmera composta pode ser inferior à da animação 3D por depender da segmentação.
-
-## Verificações
-
-Os ensaios da página usam fotos e arquivos. Não substituem o teste no celular, com o cosplay e a capa definitiva. Pés, escala real, naturalidade do movimento e desempenho precisam ser conferidos no aparelho.
-
-MindAR 1.2.5 MIT; Three.js 0.160.0 MIT; MediaPipe Tasks Vision 0.10.21 Apache-2.0. Créditos em CREDITOS_RYUK.md e licenças nos arquivos incluídos. Foto de teste: https://storage.googleapis.com/mediapipe-assets/pose.jpg . Documentação: https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker?tab=Web .
+Créditos e licenças nos arquivos existentes. Os originais permanecem nas versões anteriores.
