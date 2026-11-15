@@ -1,9 +1,13 @@
-# KIRA — olhos do Ryuk 0.9
+# KIRA — versão de apresentação 1.0
 
-Olhos recuados 6 mm no modelo, mantendo-os visíveis, com menos relevo, menos emissão própria e brilho de superfície. Texturas originais e geometria preservadas. Material de córnea por clearcoat no GLB. Versão anterior preservada em versao-008.html.
+Modelo existente preservado, com íris e pupilas separadas em quatro malhas e dois controles adicionais de olhar (81 ossos). Pupilas se articulam independentemente dos globos. Animações do corpo da versão 0.8 e materiais da versão 0.9 reaproveitados.
 
-Animações e rotação dos olhos iguais à versão 0.8. Somente a posição de repouso e as trilhas de translação dos olhos recebem o mesmo recuo para evitar saltos entre clipes. Rastreamento, escala, corpo, gesto e fumaça preservados.
+Entrada com fumaça e aparecimento gradual em 2,4 s; saída com dissolução em 2,6 s e 128 partículas. Saída durante a entrada mantém a opacidade atual para evitar clarão. Rastreamento corporal, pés, oclusão e confirmação de punho continuam nos mesmos módulos.
 
-Botão Ver olhos de perto abre uma prévia ampliada e animada sem câmera. USDZ atualizado para teste no iPad. Texturas e materiais mantidos no arquivo, respeitando as capacidades do visualizador USD Preview Surface.
+Visual Original preservado como padrão. KIRA sutil é opcional: renderização ACES, contraste, leve dessaturação e vinheta. O filtro visual é aplicado na composição exibida, sem alterar as imagens brutas usadas pelos detectores. Não há rastreamento do piso 3D nesta versão.
 
-Ensaios digitais e renderizações não substituem teste no celular com o cosplay e o caderno real. Créditos do modelo em CREDITOS_RYUK.md. Licenças nos arquivos existentes.
+Capa enviada compilada sem alterar a impressão: alvo da capa inteira e alvo da região do título. A grande área preta oferece poucos detalhes. Ensaios com arquivo digital não validam o caderno impresso. Mantenha o título inteiro visível, boa iluminação e pouco reflexo. O alvo antigo fica disponível como reserva; ativação manual é identificada separadamente e não conta como reconhecimento da capa.
+
+Fluxo: escolha imagem, visual e câmera; inicie; apresente a capa; enquadre a pessoa; mantenha os pés visíveis quando possível; feche o punho inteiro por cerca de 1 s. Ao sair a pessoa, Ryuk é ocultado. Retire e reapresente a capa para repetir.
+
+O USDZ permite conferir modelo e animação no visualizador AR da Apple. Caderno, gesto, fumaça e filtro pertencem ao WebAR. Créditos do modelo em CREDITOS_RYUK.md; licenças preservadas.
