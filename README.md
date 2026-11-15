@@ -1,9 +1,9 @@
-# KIRA — olhar sombrio 1.2
+# KIRA — rosto refinado 1.4
 
-Correção artística: íris e pupilas menores, amarelo mais escuro, cavidades dos olhos escurecidas por cor dos vértices da própria face, iluminação menos suave. Sem superfícies transparentes sobre os olhos.
+Refinamento do estudo de geometria aprovado: olhos menores e recuados, sobrancelhas mais marcadas, maçãs do rosto e cavidades de bochecha. Queixo e transições suavizados em relação ao estudo 1.3 para reduzir o aspecto pontudo. Normais transformadas preservando quinas e UVs; topologia e rig do corpo mantidos.
 
-Controles independentes das pupilas agora varrem esquerda e direita com maior amplitude (~25 graus de um extremo ao outro), pequenas variações verticais e permanências. Não é rastreamento de objetos ou olhar real: a sequência é animada. Cabeça, asas e corpo preservados. Ver olhar ao redor abre a prévia ampliada e mantém o ciclo ativo.
+As pupilas continuam varrendo os lados, com pausas. Escala do olho e recuo aplicados igualmente aos seis clipes para evitar saltos. Capa, rastreamento corporal, pés, oclusão, gesto, fumaça e reservas permanecem da versão 1.2.
 
-Escala, corpo/pés, capa, punho, oclusão e fumaça preservados da versão 1.0. Versão anterior em versao-011.html. Nova aparência e amplitude no iPad ainda precisam de teste. Reconhecimento da capa física continua pendente; alvo antigo e ativação manual disponíveis como reserva.
+Ver olhar ao redor abre a prévia ampliada. GLB e USDZ reimportados e renderizados; ciclos, animações e escala conferidos. Nova aparência no iPad e reconhecimento da capa física ainda dependem de teste. Versão pública anterior preservada em versao-012.html. Estudo 1.3 preservado localmente.
 
-GLB, Blender e USDZ editáveis preservados no pacote local. USDZ contém modelo e animação, sem os comportamentos de WebAR. Créditos do modelo em CREDITOS_RYUK.md e licenças nos arquivos existentes.
+USDZ contém modelo e animação de 8 s, sem os comportamentos do WebAR. Créditos em CREDITOS_RYUK.md; licenças nos arquivos existentes.
