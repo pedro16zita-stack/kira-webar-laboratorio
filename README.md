@@ -1,9 +1,11 @@
-# KIRA — olhar alinhado 1.5
+# KIRA — apresentação 1.6
 
-Correção binocular: as duas pupilas miram o mesmo ponto virtual a 4 m, calculado no referencial da cabeça. Cada controle compensa o eixo e a animação herdada do próprio olho. Amplitude horizontal reduzida para cerca de 6 graus de cada lado, com pausas e pequenas variações verticais.
+Calibração visual do repouso das pupilas em relação às órbitas, conservando o rosto aprovado. Cada pupila recebe uma compensação visual fixa e compartilha a mesma trajetória animada de olhar, com amplitude reduzida. Essa compensação altera a normal geométrica da superfície: ela não é uma validação de convergência física dos eixos dos olhos. O objetivo é reduzir a impressão de olhar cruzado no modelo estilizado.
 
-Rosto, malhas, materiais, corpo, escala, capa, gesto, oclusão e fumaça preservados da versão 1.4. Apenas as trilhas de rotação dos controles Olhar_L e Olhar_R foram substituídas nos seis clipes. O ponto virtual é animado; não há detecção de objetos ou de atenção visual real.
+Rosto, malhas, materiais, corpo, capa, rastreamento, escala, oclusão, gesto e fumaça preservados. Entrada de 2,4 s, saída de 2,6 s, 128 partículas. Visual Original padrão; KIRA sutil opcional. Não há piso 3D nem reconhecimento de identidade.
 
-Conferências: direção geométrica das pupilas e convergência entre elas em todos os clipes; ciclos reimportados no Blender; medição das pupilas deformadas durante a sequência do navegador. Nova aparência no iPad e reconhecimento da impressão física ainda dependem do teste do usuário. Versão anterior em versao-014.html.
+Capa enviada reconhecida nos ensaios digitais; impressão física e nova versão no iPad ainda precisam de conferência. Alvo antigo, ativação manual identificada e versão 1.5 disponíveis como reserva. Processamento da câmera no aparelho, sem gravação ou envio do vídeo.
 
-USDZ contém o modelo e animação, sem os comportamentos do WebAR. Créditos e licenças preservados.
+Abra por HTTPS, permita a câmera e apresente a capa. Enquadre a pessoa e os pés quando possível. Feche o punho inteiro por cerca de 1 s para sair. Ao sair a pessoa, Ryuk é ocultado; retire e reapresente o alvo para repetir.
+
+USDZ contém o modelo e a animação de 8 s, sem os comportamentos do WebAR. Créditos e licenças nos arquivos existentes.
