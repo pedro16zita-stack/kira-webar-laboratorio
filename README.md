@@ -1,31 +1,31 @@
-# KIRA — WebAR 0.6
+# KIRA — animação natural 0.7
 
-Protótipo gratuito do TCC KIRA. Mantém a imagem-alvo provisória e a saída por punho. Não exige aplicativo nem conta para participar.
+Experiência WebAR do TCC KIRA. Modelo, materiais e rastreamento existentes reaproveitados. O alvo continua provisório. A câmera não é gravada nem enviada a um servidor.
 
-## Uso
+## Novidades
 
-1. Abra o endereço HTTPS pelo QR Code ou link e permita a câmera.
-2. Mostre a imagem-alvo. Em seguida, enquadre a pessoa.
-3. Corpo e ombros mantêm Ryuk na composição. Com os dois pés visíveis e confiáveis, eles fornecem a referência vertical. A escala pertence a um grupo diferente do movimento de flutuação.
-4. O personagem inicia a sequência de caminhada após 10 s, caminha por 5 s, encara a pessoa por 2 s e flutua lateralmente.
-5. Feche o punho inteiro por cerca de 1 s para ativar a fumaça de 128 partículas.
-6. Se a pessoa sair, Ryuk é ocultado após uma tolerância curta contra falhas de detecção. Após 1,2 s sem rastreamento válido, a sessão encerra. Retire e apresente o alvo novamente para reativar; uma pessoa que entra depois não reabre a sessão sozinha.
+- Quatro clipes novos criados no Blender: presença suave, olhar para cada lado e caminhada calma. Os dois clipes originais continuam no GLB.
+- Ciclos de presença de 8 s com movimentos pequenos de cabeça, torso, asas e acessórios; mistura gradual entre poses.
+- Caminhada de 5 s: as pernas acompanham a distância percorrida e o corpo se vira na direção do movimento. A amplitude lateral diminui se faltar espaço no enquadramento.
+- Espaço Próximo / Equilibrado / Afastado, proporcional ao corpo. Não é medição em metros.
+- Movimento Suave permite até 60 quadros/s; Econômico limita a 30. O desempenho real fica no JSON e depende do aparelho.
+- Botão Ver animação sem câmera: prévia de 20 s com foto, sem validar rastreamento físico.
+- Comparação com a versão 0.6 preservada em versao-006.html.
 
-O rastreamento usa MediaPipe Pose Landmarker Lite com 33 pontos, incluindo tornozelos, calcanhares e pontas dos pés. Não identifica o cosplayer por identidade. Usa continuidade espacial e não garante distinguir duas pessoas que se substituam na mesma posição sem intervalo. Não mede nem ancora o piso real em 3D. Pés fora da câmera ou com baixa confiança são ignorados; não são tratados como detecções válidas.
+## Fluxo preservado
 
-Os olhos vermelhos da pessoa foram removidos. O rosto e os olhos do modelo Ryuk usam as texturas originais, com materiais opacos corrigidos. Geometria, ossos, texturas e dois clipes originais foram preservados.
+1. Abra por QR Code ou link HTTPS e permita a câmera.
+2. Mostre o caderno/alvo e depois enquadre a pessoa. O corpo mantém Ryuk na composição e os pés dão referência vertical quando detectados.
+3. Observe presença, passos, olhar e flutuação. Ajuste o espaço lateral.
+4. Feche o punho inteiro por cerca de 1 s para acionar a fumaça de 128 partículas.
+5. Ao perder a pessoa, Ryuk é ocultado. Após encerrar a sessão, retire e apresente o alvo novamente.
 
-## Ensaios
+Rastreamento corporal, oclusão, confirmação do punho e encerramento por perda usam os mesmos módulos da versão 0.6. Não há reconhecimento de identidade nem reconstrução do piso em 3D. A caminhada não garante contato exato com o chão real. Os olhos vermelhos da pessoa continuam retirados.
 
-Os botões em “Ensaios com imagens digitais” verificam corpo e pés em fotos, perda da pessoa, bloqueio de retorno sem alvo, escala durante flutuação, materiais do rosto, alvo e punho. São ensaios com arquivos; não substituem o teste no celular e no caderno físico. O JSON inclui a cadência real da renderização e os tempos dos dois processadores.
+O GLB acrescenta animações ao modelo anterior, preservando integralmente o prefixo binário, a geometria e as texturas. Os originais permanecem nas versões anteriores. A cadência da câmera composta pode ser inferior à da animação 3D por depender da segmentação.
 
-As imagens da câmera são processadas no aparelho, sem gravação nem envio. Dependências com versões fixas e WebAssembly podem carregar de CDN. Safari/iPhone, iPad e Android precisam ser testados individualmente. O recorte da pessoa mantém o Selfie Segmenter anterior. Processamento corporal e da mão ficam em workers separados; no máximo um quadro de cada tipo fica em processamento.
+## Verificações
 
-## Fontes e licenças
+Os ensaios da página usam fotos e arquivos. Não substituem o teste no celular, com o cosplay e a capa definitiva. Pés, escala real, naturalidade do movimento e desempenho precisam ser conferidos no aparelho.
 
-- [Pose Landmarker e modelo Lite](https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker?tab=Web).
-- [Modelo oficial](https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task).
-- [Foto de referência oficial MediaPipe](https://storage.googleapis.com/mediapipe-assets/pose.jpg), usada somente nos ensaios.
-- MindAR MIT; Three.js MIT; MediaPipe Apache-2.0. Licenças incluídas. Créditos do Ryuk em `CREDITOS_RYUK.md`; a licença das bibliotecas não transfere direitos sobre personagens ou assets.
-
-Projeto educacional. A capa física definitiva, a escala real e o novo rastreamento em movimento no celular permanecem dependentes de teste.
+MindAR 1.2.5 MIT; Three.js 0.160.0 MIT; MediaPipe Tasks Vision 0.10.21 Apache-2.0. Créditos em CREDITOS_RYUK.md e licenças nos arquivos incluídos. Foto de teste: https://storage.googleapis.com/mediapipe-assets/pose.jpg . Documentação: https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker?tab=Web .
