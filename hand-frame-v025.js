@@ -1,0 +1,8 @@
+const full=()=>({x:0,y:0,w:1,h:1,kind:'full'});
+export class HandFramePlanner {
+ constructor(){this.reset()}
+ reset(){this.lastSeen=null;this.bounds=null;this.frames=0;}
+ observe(result,now){if(!result.handSeen||!result.points?.length)return;const p=result.points.filter(q=>Number.isFinite(q.x)&&Number.isFinite(q.y));if(p.length<15)return;this.bounds={minX:Math.min(...p.map(q=>q.x)),maxX:Math.max(...p.map(q=>q.x)),minY:Math.min(...p.map(q=>q.y)),maxY:Math.max(...p.map(q=>q.y))};this.lastSeen=now;}
+ next(now,posePoints=[]){this.frames++;if(!this.bounds||now-this.lastSeen>800){const wrists=[15,16].map(i=>posePoints[i]).filter(p=>p&&p.visibility>=.4&&(p.presence??1)>=.5&&p.x>=0&&p.x<=1&&p.y>=0&&p.y<=1);if(!wrists.length||this.frames%3===1)return full();const p=wrists[(Math.floor(this.frames/3)+this.frames%3)%wrists.length],extent=.36;return {x:Math.max(0,Math.min(1-extent,p.x-extent/2)),y:Math.max(0,Math.min(1-extent,p.y-extent/2)),w:extent,h:extent,kind:'wrist-search'};}if(this.frames%3===1)return full();const b=this.bounds,extent=Math.min(.85,Math.max(.3,(b.maxX-b.minX)*2.2,(b.maxY-b.minY)*2.2)),cx=(b.minX+b.maxX)/2,cy=(b.minY+b.maxY)/2;return {x:Math.max(0,Math.min(1-extent,cx-extent/2)),y:Math.max(0,Math.min(1-extent,cy-extent/2)),w:extent,h:extent,kind:'hand-crop'};}
+}
+export function mapHandResult(result,frame){const points=(result.points??[]).map(p=>({...p,x:frame.x+p.x*frame.w,y:frame.y+p.y*frame.h}));const wrist=points[0];return {...result,points,gesture:result.gesture?{...result.gesture,center:wrist?{x:wrist.x,y:wrist.y}:null}:null,analysisRegion:frame.kind};}
