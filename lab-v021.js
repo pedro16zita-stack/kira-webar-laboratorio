@@ -313,7 +313,7 @@ $('#cameraDemo').onclick=()=>$('#preview').click();
 function updateNotebook(now){
  if(bookInspection){notebook.update({visible:true,opacity:1,x:0,y:1.1,z:0,scale:1.8,side:1,now,inspection:true});return;}
  const visible=($('#showBook').checked||(demo&&demoWantsBook))&&placement.visible&&['active','exiting'].includes(phase)&&person.state(now).visible;
- notebook.update({visible,opacity:currentOpacity,x:placement.position.x+(motion.position.x-sideDirection*.20)*placement.scale.x,y:placement.position.y+(refs.hipY+.15+motion.position.y)*placement.scale.x,z:.22*placement.scale.x,scale:placement.scale.x*1.65,side:sideDirection,now});
+ notebook.update({visible,opacity:currentOpacity,x:placement.position.x+(motion.position.x-sideDirection*.38)*placement.scale.x,y:placement.position.y+(refs.hipY+.15+motion.position.y)*placement.scale.x,z:.22*placement.scale.x,scale:placement.scale.x*1.65,side:sideDirection,now});
  const state=notebook.snapshot();text('#notebookStatus',state.error?'O caderno virtual não carregou. Ryuk continua disponível.':state.visible?'Caderno virtual de demonstração — não substitui o caderno físico.':'');
 }
 $('#showBook').onchange=()=>{if(!$('#showBook').checked&&!demo)notebook?.reset()};
