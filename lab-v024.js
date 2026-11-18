@@ -123,7 +123,7 @@ function updateLiveStatus(){
 function drawCover(video,canvas){const ctx=canvas.getContext('2d'),s=Math.max(W/video.videoWidth,H/video.videoHeight),sw=W/s,sh=H/s;ctx.drawImage(video,(video.videoWidth-sw)/2,(video.videoHeight-sh)/2,sw,sh,0,0,W,H)}
 function canvas(){const c=document.createElement('canvas');c.width=W;c.height=H;return c}
 async function setupTarget(){if(!controllerPromise)controllerPromise=import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js').then(m=>Controller=m.Controller);await controllerPromise}
-function stopLive(){demo=false;demoRunner?.close();demoRunner=null;demoProof?.dispose();demoProof=null;bookInspection=false;demoWantsBook=false;notebook?.reset();reactiveGaze?.reset();lastAcceptedBodyAt=null;document.body.classList.remove('session-running','session-starting');$('#view').classList.add('scene-empty');$('#stop').textContent='Encerrar câmera';sceneAtmosphere?.reset();
+function stopLive(){$('.gesture-note').textContent='Para encerrar a aparição, feche a mão e segure por cerca de um segundo.';demo=false;demoRunner?.close();demoRunner=null;demoProof?.dispose();demoProof=null;bookInspection=false;demoWantsBook=false;notebook?.reset();reactiveGaze?.reset();lastAcceptedBodyAt=null;document.body.classList.remove('session-running','session-starting');$('#view').classList.add('scene-empty');$('#stop').textContent='Encerrar câmera';sceneAtmosphere?.reset();
  contactShadow?.reset();pipelineMetrics.reset();token++;epoch++;live=false;bodyRunner?.close();handRunner?.close();bodyRunner=handRunner=null;videoStream?.getTracks().forEach(t=>t.stop());videoStream=null;bodyReady=handReady=false;
  const old=targetController;targetController=null;if(old)setTimeout(()=>old.dispose(),500);compositor?.dispose();compositor=null;const v=$('#video');v.srcObject=null;v.hidden=true;$('#view').classList.remove('live');if(placement){placement.visible=false;if(smoke)smoke.visible=false;smokeStart=null;if(renderer)renderer.domElement.style.transform='none'}
  phase='idle';$('#live').disabled=false;$('#camera').disabled=false;$('#target').disabled=false;$('#manual').disabled=true;text('#liveStatus','Câmera desligada.');if(report.live){report.live.endedAt=new Date().toISOString();show()}
@@ -371,7 +371,7 @@ $('#skirtTest').onclick=()=>runTest('skirt-test',async()=>{
 });
 
 async function startContinuousDemo(){
- if(live||demo||testing||suiteRunning)return;stopLive();const mine=++token;demo=true;demoWantsBook=true;$('#live').disabled=true;$('#camera').disabled=true;$('#target').disabled=true;$('#cameraError').hidden=true;document.body.classList.add('session-starting');$('#stop').textContent='Encerrar demonstração';text('#liveStatus','Preparando demonstração sem câmera…');
+ if(live||demo||testing||suiteRunning)return;stopLive();const mine=++token;demo=true;demoWantsBook=true;$('#live').disabled=true;$('#camera').disabled=true;$('#target').disabled=true;$('#cameraError').hidden=true;document.body.classList.add('session-starting');$('#stop').textContent='Encerrar demonstração';text('#liveStatus','Preparando demonstração sem câmera…');$('.gesture-note').textContent='Demonstração automática. Para encerrar, use o botão acima.';
  let runner,proof;
  try{
   await setupModels();if(mine!==token)return;runner=new WorkerRunner('./body-worker-v023.js');demoRunner=runner;await runner.ready;if(mine!==token)return;
