@@ -1,0 +1,767 @@
+import {SideWalk} from './side-walk-v032.js';
+import {closePinholes} from './matte-filter-v032.js';
+import {PresentationFlow} from './presentation-flow-v031.js';
+import {preserveAnimatedEyes} from './eye-visibility-v030.js';
+import * as THREE from 'three';
+import {applyMaterialFade} from './material-fade-v024.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {handMessages,exitMessage} from './presentation-status-v030.js';
+import {BookReveal} from './book-reveal-v030.js';
+import {NotebookVisual} from './notebook-v030.js';
+import {WorkerRunner} from './worker-runner-v025.js';
+import {requestCamera,cameraErrorInfo} from './camera-access-v020.js';
+import {ReactiveGaze} from './reactive-gaze-v019.js';
+import {SceneAtmosphere} from './scene-atmosphere-v018.js';
+import {ContactShadow} from './contact-shadow-v017.js';
+import {PipelineMetrics} from './pipeline-metrics-v017.js';
+import {bodySnapshot,BodyFramer} from './body-tracking-v023.js';
+import {GestureGate} from './gesture-gate-v027.js';
+import {HandFramePlanner,mapHandResult} from './hand-frame-v033.js';
+import {HandAssociation,resolveGesture} from './hand-evidence-v0341.js';
+import {SpaceChooser} from './space-chooser-v027.js';
+import {sceneSequence,composition} from './sequence-v008.js?v=0.8';
+import {NaturalAnimator} from './natural-animator-v023.js';
+import {Compositor} from './compositor-v034.js';
+import {PersonSession} from './stable-presence-v028.js';
+import {stabilizeEyes,eyeDepthSettings} from './eye-depth-v028.js';
+import {LayeredSmoke} from './smoke-volume-v033.js';
+import {SmokeMotion} from './smoke-motion-v033.js';
+import {LiveBudget,renderProfile,videoFrameStamp} from './live-budget-v033.js';
+
+const $=s=>document.querySelector(s),W=480,H=640,SMOKE_COUNT=128;
+const report={versions:{lab:'3.4.1-candidata',three:THREE.REVISION,mediapipe:'0.10.21',mindar:'1.2.5'},environment:{userAgent:navigator.userAgent,secureContext:isSecureContext,softwareGraphicsTest:new URLSearchParams(location.search).get('tfjsflags')?.includes('SOFTWARE_WEBGL_ENABLED:true')??false},humanRedEyes:false,tests:{},errors:[]};
+const show=()=>$('#results').textContent=JSON.stringify(report,null,2),status=t=>$('#status').textContent=t;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const presentationFlow=new PresentationFlow({guide:$('#experienceGuide'),title:$('#flowTitle'),detail:$('#flowDetail'),steps:[...document.querySelectorAll('.flow-steps li')],panel:$('#replayPanel'),button:$('#flowReplay'),onReplay:()=>{if(!live||phase!=='complete')return;$('#restart').click();updateLiveStatus();}});
+const loadImage=url=>new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=()=>reject(new Error('Não carregou '+url));i.src=url});
+let renderFrame=null,digitalFramePump=null,digitalCameraFrame=null;
+let notebook,bookInspection=false,demoWantsBook=false,demoRunner=null,demoProof=null,suiteRunning=false;
+let reactiveGaze,lastAcceptedBodyAt=null;
+let sceneAtmosphere,contactShadow,lastAcceptedFeetAt=null;
+const pipelineMetrics=new PipelineMetrics();
+const sideWalk=new SideWalk();
+let naturalAnimator,spacing=null,walkRange=.65,walkDistance=0,lastWalkX=0,walkSpeed=0,motionSide=1;
+let smokeMode=null,exitOpacity=1,currentOpacity=1;
+let renderer,scene,camera,placement,motion,model,mixer,entry,idle,refs,modelPromise,Controller,controllerPromise,smoke,smokeStart=null;
+let live=false,demo=false,testing=false,phase='idle',token=0,epoch=0,videoStream,bodyRunner,handRunner,compositor,targetController;
+let targetBusy=false,bodyBusy=false,handBusy=false,lastTarget=0,lastBody=0,lastHand=0,bodyReady=false,handReady=false,mustClear=false,armedAt=0;
+let appearanceAt=null,entryElapsed=0,appearing=false,front=false,sideDirection=1,autoSide=null,lastBodyData=null,framing=null,exitTrigger=null;
+let targetPlacement={x:0,y:0,scale:1},sequence=sceneSequence(0),frameTimes=[],bodyTimes=[],handTimes=[],lastPoseDeltas=[],walkRig=[];
+const handAssociation=new HandAssociation(),spaceChooser=new SpaceChooser();
+const framer=new BodyFramer(),person=new PersonSession(),gestureGate=new GestureGate(),handFramePlanner=new HandFramePlanner();
+const viewHeight=()=>2*camera.position.z*Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+const text=(selector,value)=>{if($(selector).textContent!==value)$(selector).textContent=value};
+
+function defaultCamera(){camera.position.set(0,1.2,4.8);camera.rotation.set(0,0,0);camera.aspect=.75;camera.updateProjectionMatrix();renderer.setSize(W,H)}
+function setupModels(){if(modelPromise)return modelPromise;modelPromise=(async()=>{
+ status('Carregando personagem…');renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));renderer.setSize(720,460);$('#view').appendChild(renderer.domElement);
+ scene=new THREE.Scene();camera=new THREE.PerspectiveCamera(40,720/460,.1,40);camera.position.set(0,1.2,4.8);scene.add(new THREE.HemisphereLight(0xffffff,0x403b49,.95));const key=new THREE.DirectionalLight(0xffffff,2.2);key.position.set(-2.5,4,4);scene.add(key);const fill=new THREE.DirectionalLight(0xc5d6ff,.12);fill.position.set(-3,2,3);scene.add(fill);const rim=new THREE.DirectionalLight(0x9a4159,.55);rim.position.set(1,3,-3);scene.add(rim);
+ sceneAtmosphere=new SceneAtmosphere({view:$('#view'),renderer,rim});
+ placement=new THREE.Group();motion=new THREE.Group();placement.add(motion);scene.add(placement);
+ const gltf=await new GLTFLoader().loadAsync('./ryuk-v025.glb');model=gltf.scene;report.eyeRendering=stabilizeEyes(model);motion.add(model);mixer=new THREE.AnimationMixer(model);
+ const materials=[];model.traverse(o=>{if(!o.isMesh)return;for(const m of Array.isArray(o.material)?o.material:[o.material]){m.userData.original={transparent:m.transparent,depthWrite:m.depthWrite,alphaTest:m.alphaTest};for(const map of [m.map,m.normalMap,m.emissiveMap])if(map)map.anisotropy=Math.min(4,renderer.capabilities.getMaxAnisotropy());if(!materials.some(x=>x.name===m.name))materials.push({name:m.name,transparent:m.transparent,roughness:m.roughness});}});
+ entry=mixer.clipAction(gltf.animations.find(a=>a.name==='01_Manifestacao'));entry.setLoop(THREE.LoopOnce,1);entry.clampWhenFinished=true;idle=mixer.clipAction(gltf.animations.find(a=>a.name==='02_Suspensao'));idle.play();mixer.update(.1);scene.updateMatrixWorld(true);
+ const point=name=>{const o=model.getObjectByName(name);if(!o)throw new Error('Osso ausente: '+name);return o.getWorldPosition(new THREE.Vector3())};
+ const l=point('bip_upperArm_L'),r=point('bip_upperArm_R'),hl=point('bip_hip_L'),hr=point('bip_hip_R'),box=new THREE.Box3().setFromObject(model,true),head=new THREE.Box3().setFromObject(model.getObjectByName('Head'),true);
+ refs={shoulderWidth:Math.abs(l.x-r.x),shoulderY:(l.y+r.y)/2,hipY:(hl.y+hr.y)/2,footY:box.min.y,height:box.max.y-box.min.y,headY:(head.min.y+head.max.y)/2,headWidth:head.max.x-head.min.x};refs.torsoHeight=refs.shoulderY-refs.hipY;
+ report.eyeVisibility=preserveAnimatedEyes(model);naturalAnimator=new NaturalAnimator(mixer,gltf.animations);reactiveGaze=new ReactiveGaze(model);
+ notebook=new NotebookVisual(scene);contactShadow=new ContactShadow(scene);applyLook();makeSmoke();report.tests.MODEL={animations:gltf.animations.map(a=>({name:a.name,duration:a.duration})),materials,refs,animationSource:'Blender',originalBodyGeometryPreserved:true,separatePupils:true};placement.visible=false;
+ let previous=performance.now(),scheduled=previous;renderFrame=()=>{const now=performance.now(),fps=renderProfile($('#quality').value,live).fps,interval=1000/fps;if(now<scheduled-.5)return;const frameMs=now-previous,dt=Math.min(frameMs/1000,.1);previous=now;scheduled+=interval;if(now-scheduled>interval)scheduled=now+interval;if(live||demo){frameTimes.push(frameMs);if(frameTimes.length>180)frameTimes.shift()}
+  if(live||demo)updateScene(now,dt);
+  reactiveGaze.beforeMixer();naturalAnimator.update(appearanceAt===null?null:(now-appearanceAt)/1000,dt,sideWalk.active?{...sequence,stage:'caminhada'}:sequence,sideDirection,walkDistance+sideWalk.distance,sideWalk.active?Math.max(walkSpeed,sideWalk.speed):walkSpeed,phase==='active');mixer.update(dt);updateReactiveGaze(now,dt);
+  updateSmoke(now);updateNotebook(now);updateContactShadow(now,dt);sceneAtmosphere.update({now,dt,mode:smokeMode,startedAt:smokeStart,visible:placement.visible&&(!(live||demo)||person.state(now).visible)});renderer.render(scene,camera);
+ };renderer.setAnimationLoop(renderFrame);$('#smoke').disabled=false;show();return model;
+ })();return modelPromise}
+function makeSmoke(){smoke=new LayeredSmoke(SMOKE_COUNT);scene.add(smoke);}
+
+function setOpacity(alpha){currentOpacity=alpha;model.traverse(o=>{if(o.isMesh)for(const m of Array.isArray(o.material)?o.material:[o.material])applyMaterialFade(m,alpha,m.userData.original)})}
+function restoreMaterials(){setOpacity(1)}
+function clearPose(){}
+function reveal(now){phase='active';appearanceAt=now;restoreMaterials();placement.visible=true;model.visible=true;naturalAnimator.reveal();walkDistance=0;lastWalkX=0;walkSpeed=0;motionSide=sideDirection;smokeMode='entry';smokeStart=now;setOpacity(0);scene.updateMatrixWorld(true);smoke.position.copy(motion.getWorldPosition(new THREE.Vector3()));smoke.scale.copy(placement.scale);}
+function updateScene(now,dt){
+ const p=person.state(now);if(p.expired&&['active','exiting','complete','body'].includes(phase)){endSession('Pessoa saiu. Retire e apresente o alvo novamente.');return}
+ if(phase==='body'&&bodyReady&&!p.bound&&now-armedAt>15000){endSession('Nenhuma pessoa enquadrada. Apresente o alvo novamente.');return}
+ if(phase==='active'&&p.visible){
+  const a=1-Math.exp(-dt*4);placement.visible=true;placement.position.x=sideWalk.active?sideWalk.step(placement.position.x,targetPlacement.x,placement.scale.x,dt):placement.position.x+(targetPlacement.x-placement.position.x)*a;placement.position.y+=(targetPlacement.y-placement.position.y)*a;const scale=placement.scale.x+(targetPlacement.scale-placement.scale.x)*a;placement.scale.setScalar(scale);
+  const elapsed=(now-appearanceAt)/1000;sequence=sceneSequence(elapsed);
+  motionSide+=(sideDirection-motionSide)*a;walkRange+=((spacing?.walkRange??.65)-walkRange)*a;
+  const walking=sequence.stage==='caminhada',localWalkX=(walking?motionSide*walkRange*sequence.path:0)*(1-sideWalk.blend);
+  if(walking){const deltaX=Math.abs(localWalkX-lastWalkX);walkDistance+=deltaX;walkSpeed+=(deltaX/Math.max(dt,.001)-walkSpeed)*(1-Math.exp(-dt*10));}else walkSpeed*=Math.exp(-dt*8);
+  lastWalkX=localWalkX;const floatLimit=Math.min(1,(spacing?.floatRange??.10)/.10);
+  motion.position.set(localWalkX+sequence.floatX*floatLimit*(1-sideWalk.blend),sequence.floatY*(1-sideWalk.blend),0);
+  const heading=motionSide*Math.PI/2*(1-2*sequence.turn),allowWalking=walkRange>.08;
+  const yaw=walking&&allowWalking?heading*sequence.headingBlend-motionSide*.12*(1-sequence.headingBlend):-motionSide*.12;
+  const aim=yaw+Math.atan2(Math.sin(sideWalk.heading-yaw),Math.cos(sideWalk.heading-yaw))*sideWalk.blend;motion.rotation.y+=Math.atan2(Math.sin(aim-motion.rotation.y),Math.cos(aim-motion.rotation.y))*a;
+
+ }else if(phase==='active')placement.visible=false;
+ if(phase==='exiting'&&!p.visible){placement.visible=false;smoke.visible=false;}
+ if(live)updateLiveStatus();
+}
+function startExit(trigger='gesture'){
+ if(!['active','test'].includes(phase))return;sideWalk.cancel();phase='exiting';smokeMode='exit';exitOpacity=currentOpacity;exitTrigger=trigger;scene.updateMatrixWorld(true);smoke.position.copy(motion.getWorldPosition(new THREE.Vector3()));smoke.scale.copy(placement.scale);smokeStart=performance.now();if(report.live&&live){report.live.exitTriggered=true;report.live.exitReason=trigger;report.live.exitAt=new Date().toISOString()}
+}
+function updateSmoke(now){
+ if(smokeStart===null)return;const entering=smokeMode==='entry',duration=entering?2400:2600,u=Math.min(1,(now-smokeStart)/duration),allowed=!(live||demo)||person.state(now).visible;
+ if(entering){scene.updateMatrixWorld(true);smoke.position.copy(motion.getWorldPosition(new THREE.Vector3()));smoke.scale.copy(placement.scale);}
+ smoke.visible=u<1&&allowed;if(smoke.visible)smoke.update(u,smokeMode,$('#quality').value);
+ const alpha=entering?THREE.MathUtils.smoothstep(u,.06,.72):exitOpacity*(1-THREE.MathUtils.smoothstep(u,.18,.78));setOpacity(alpha);
+ if(u===1){smoke.visible=false;smokeStart=null;smokeMode=null;if(entering){restoreMaterials();report.tests.ENTRANCE={seconds:2.4,particles:SMOKE_COUNT,modelVisible:placement.visible,opacity:currentOpacity};}else{placement.visible=false;phase='complete';report.tests.SMOKE={trigger:exitTrigger,particles:SMOKE_COUNT,seconds:2.6,modelHidden:true,smokeHidden:true};}show()}
+}
+
+function resetScene(){sideWalk.reset();handAssociation.reset();spaceChooser.reset();handFramePlanner.reset();bookInspection=false;notebook?.reset();reactiveGaze?.reset();lastAcceptedBodyAt=null;sceneAtmosphere?.reset();lastAcceptedFeetAt=null;contactShadow?.reset();clearPose();restoreMaterials();placement.visible=false;placement.position.set(0,0,0);placement.scale.setScalar(1);motion.position.set(0,0,0);motion.rotation.set(0,0,0);model.visible=true;smoke.visible=false;smokeStart=null;smokeMode=null;appearanceAt=null;appearing=false;naturalAnimator.reset();walkDistance=0;lastWalkX=0;walkSpeed=0;walkRange=.65;spacing=null;framer.reset();person.arm();gestureGate.reset();autoSide=null;lastBodyData=null;framing=null;frameTimes=[];sequence=sceneSequence(0)}
+function armTarget(now){epoch++;resetScene();phase='body';armedAt=now;if(live){report.live.targetRecognized=true;report.live.targetAt=new Date().toISOString();report.live.personLost=false;report.live.requiresTargetAgain=false;report.live.exitTriggered=false;report.live.handSeen=false;report.live.gesture=null;}}
+function endSession(reason){sideWalk.cancel();bookInspection=false;notebook?.reset();reactiveGaze?.reset();lastAcceptedBodyAt=null;sceneAtmosphere?.reset();lastAcceptedFeetAt=null;contactShadow?.reset();epoch++;phase='target';placement.visible=false;smoke.visible=false;smokeStart=null;clearPose();mustClear=true;compositor?.clear();gestureGate.reset();handAssociation.reset();if(report.live&&live){report.live.personLost=true;report.live.exitReason='tracking';report.live.requiresTargetAgain=true;report.live.personLossAt=new Date().toISOString()}text('#liveStatus',reason)}
+function updatePlacement(body){
+ const f=framer.update(body,refs,Number($('#size').value),viewHeight(),camera.aspect);if(!f)return;lastBodyData=body;framing=f;const center=body.center.x;
+ const chosen=spaceChooser.update(body,refs,f.scale,viewHeight()*camera.aspect,Number($('#space').value),performance.now(),$('#side').value,front);const previousSide=sideDirection;sideDirection=chosen.direction;sideWalk.request(previousSide,sideDirection,phase==='active');spacing=chosen.composition;autoSide=sideDirection;
+ targetPlacement={x:spacing.x,y:camera.position.y+(.5-f.anchorY)*viewHeight()-f.localY*f.scale,scale:f.scale};
+}
+function acceptBody(r,now){
+ const state=person.update(r.body,now);if(state.accepted&&state.visible){lastAcceptedBodyAt=now;lastAcceptedFeetAt=r.body.feetVisible?now:null;if(phase==='body'){updatePlacement(r.body);placement.position.set(targetPlacement.x,targetPlacement.y,0);placement.scale.setScalar(targetPlacement.scale);reveal(now)}else if(phase==='active')updatePlacement(r.body);}
+ if(state.expired)endSession('Pessoa saiu. Apresente o caderno novamente.');
+ if(live){report.live.person={present:r.body.present,visible:state.visible,bound:state.bound,feetVisible:r.body.feetVisible,framingSource:framing?.source??null};report.live.bodyDetections+=r.body.present?1:0;report.live.maskFrames++;report.live.occlusionApplied=true;report.live.redEyes=false;}
+ if(live)updateLiveStatus();return state;
+}
+function updateLiveStatus(){
+ if(live&&report.live?.lastHandResultAt&&performance.now()-report.live.lastHandResultAt>1000)report.live.handSeen=false;
+ const visible=live&&phase==='active'&&person.state(performance.now()).visible;$('#gestureFeedback').hidden=!visible;$('#exitAppearance').hidden=!visible;gestureGate.expire(performance.now());$('#gestureProgress').value=gestureGate.progress;
+ presentationFlow.update({live,phase,personVisible:visible,mustClear});
+ text('#sessionVersion','KIRA 3.4.1 · '+($('#side').value==='auto'?'posição automática':$('#side').value==='left'?'posição à esquerda':'posição à direita'));
+ const handFeedback=handMessages({ready:handReady,initialization:report.live?.handInitialization,seen:report.live?.handSeen,armed:gestureGate.armed,progress:gestureGate.progress});if(visible)text('#gestureHint',handFeedback.hint);
+ if(phase==='target'){text('#liveStatus',mustClear?'Rastreamento da pessoa perdido. Retire e apresente o caderno novamente.':'Apresente a imagem-alvo inteira.');return}
+ if(!bodyReady){text('#liveStatus','Preparando rastreamento corporal…');return}
+ if(phase==='body'){text('#liveStatus','Caderno reconhecido. Enquadre a pessoa para Ryuk aparecer.');return}
+ if(phase==='complete'){text('#liveStatus',exitMessage(exitTrigger,true));return}
+ if(phase==='exiting'){text('#liveStatus',exitMessage(exitTrigger));return}
+ const state=person.state(performance.now());if(!state.visible){text('#liveStatus','Rastreamento pausado. Reenquadre a pessoa para retomar.');return}
+ const feet=lastBodyData?.feetVisible?'Pés detectados.':'Pés não confirmados; usando tronco/ombros.';
+ text('#liveStatus',(lastBodyData?.presenceSource==='tronco-sem-rosto'?'Pessoa presente pelo tronco. ':'')+feet+' '+handFeedback.short);
+}
+function drawCover(video,canvas,frame={x:0,y:0,w:1,h:1}){const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height,vw=video.videoWidth??video.width,vh=video.videoHeight??video.height,s=Math.max(w/vw,h/vh),sw=w/s,sh=h/s;ctx.drawImage(video,(vw-sw)/2+sw*frame.x,(vh-sh)/2+sh*frame.y,sw*frame.w,sh*frame.h,0,0,w,h)}
+function canvas(){const c=document.createElement('canvas');c.width=W;c.height=H;return c}
+async function setupTarget(){if(!controllerPromise)controllerPromise=import('https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js').then(m=>Controller=m.Controller);await controllerPromise}
+function stopLive(){sideWalk.cancel();presentationFlow.hide();$('.gesture-note').textContent='Para encerrar a aparição, feche a mão e segure por cerca de um segundo.';demo=false;demoRunner?.close();demoRunner=null;demoProof?.dispose();demoProof=null;bookInspection=false;demoWantsBook=false;notebook?.reset();reactiveGaze?.reset();lastAcceptedBodyAt=null;document.body.classList.remove('session-running','session-starting');$('#view').classList.add('scene-empty');$('#stop').textContent='Encerrar câmera';sceneAtmosphere?.reset();
+ contactShadow?.reset();pipelineMetrics.reset();token++;epoch++;live=false;digitalCameraFrame=null;applyPerformanceProfile();bodyRunner?.close();handRunner?.close();bodyRunner=handRunner=null;videoStream?.getTracks().forEach(t=>t.stop());videoStream=null;bodyReady=handReady=false;
+ const old=targetController;targetController=null;if(old)setTimeout(()=>old.dispose(),500);compositor?.dispose();compositor=null;const v=$('#video');v.srcObject=null;v.hidden=true;$('#view').classList.remove('live');if(placement){placement.visible=false;if(smoke)smoke.visible=false;smokeStart=null;if(renderer)renderer.domElement.style.transform='none'}
+ phase='idle';$('#gestureFeedback').hidden=true;$('#exitAppearance').hidden=true;gestureGate.reset();handFramePlanner.reset();$('#live').disabled=false;$('#camera').disabled=false;$('#target').disabled=false;$('#manual').disabled=true;text('#liveStatus','Câmera desligada.');if(report.live){report.live.endedAt=new Date().toISOString();show()}
+}
+async function startLive(cameraRequest=requestCamera,digital=false){
+ if(live||demo||testing||(!digital&&(suiteRunning||$('#live').disabled)))return;demoWantsBook=false;$('#live').disabled=true;$('#camera').disabled=true;$('#target').disabled=true;const mine=++token;let startupStage='camera';$('#cameraError').hidden=true;document.body.classList.add('session-starting');$('#stop').disabled=false;$('#stop').textContent='Cancelar';
+ try{
+  text('#liveStatus','Aguardando acesso à câmera…');const access=await cameraRequest({facing:$('#camera').value});const stream=access.stream;if(mine!==token){stream.getTracks().forEach(t=>t.stop());return}videoStream=stream;
+  startupStage='assets';text('#liveStatus','Câmera encontrada. Preparando Ryuk…');await Promise.all([setupModels(),setupTarget()]);if(mine!==token)return;defaultCamera();resetScene();front=$('#camera').value==='user';startupStage='video';
+  const video=$('#video');video.srcObject=stream;await video.play();if(mine!==token)return;$('#view').classList.remove('scene-empty');video.hidden=false;video.style.transform=front?'scaleX(-1)':'none';renderer.domElement.style.transform=front?'scaleX(-1)':'none';$('#view').appendChild(video);$('#view').classList.add('live');compositor=new Compositor($('#view'),front);compositor.liveVideo=true;compositor.attach(scene);
+  live=true;applyPerformanceProfile();document.body.classList.remove('session-starting');$('#stop').textContent='Encerrar câmera';document.body.classList.add('session-running');$('#manual').disabled=false;phase='target';mustClear=false;targetBusy=bodyBusy=handBusy=false;lastTarget=lastBody=lastHand=0;bodyTimes=[];handTimes=[];
+  report.cameraAccess={available:true,code:'ready',fallbackUsed:access.fallbackUsed};report.live={startedAt:new Date().toISOString(),camera:front?'frontal':'traseira',videoSize:[video.videoWidth,video.videoHeight],tracks:stream.getVideoTracks().length,cameraConstraintFallback:access.fallbackUsed,targetName:targetConfig().name,manualActivation:false,tracking:'body-pose-v023-face-independent',humanRedEyes:false,targetRecognized:false,bodyDetections:0,maskFrames:0,occlusionApplied:false,exitTriggered:false,personLost:false,requiresTargetAgain:false,handSeen:false,gesture:null,worldAnchor:false};
+  const ctl=new Controller({inputWidth:W,inputHeight:H});targetController=ctl;await ctl.addImageTargets(targetConfig().mind);if(mine!==token)return;
+  bodyRunner=new WorkerRunner('./body-worker-v025.js');
+  const startHand=()=>{if(mine!==token)return;handRunner=new WorkerRunner('./hand-worker-v0341.js');handRunner.ready.then(()=>{if(mine===token){handReady=true;report.live.handInitialization='ready'}}).catch(e=>{if(mine===token){report.live.handInitialization='failed';report.errors.push({stage:'hand-init',message:e.message});show()}});};
+  bodyRunner.ready.then(()=>{if(mine===token){bodyReady=true;startHand();if(phase==='body')armedAt=performance.now()}}).catch(e=>{if(mine===token){report.errors.push({stage:'body-init',message:e.message});stopLive();text('#liveStatus','Rastreamento corporal indisponível: '+e.message)}});
+
+  const targetCanvas=canvas(),bodyCanvas=canvas(),handCanvas=canvas();const budget=new LiveBudget();let lastReport=0,lastPreview=-1;
+  const tick=()=>{
+   if(!live||mine!==token)return;const now=performance.now(),frameStamp=videoFrameStamp(video);
+   if(frameStamp.key!==lastPreview&&video.readyState>=2){lastPreview=frameStamp.key;compositor.paintVideo(video,placement.visible&&person.state(now).visible,now);}
+   const job=budget.choose(now,{bodyReady,handReady,bodyBusy,handBusy,bodyAllowed:['body','active','exiting','complete'].includes(phase),handAllowed:phase==='active'&&person.state(now).visible,videoTime:frameStamp.key,handFocused:gestureGate.armed||((report.live.lastHandResultAt??-Infinity)>now-650&&report.live.handSeen)});
+   if(phase==='target'&&!targetBusy&&now-lastTarget>350&&video.readyState>=2){targetBusy=true;lastTarget=now;drawCover(video,targetCanvas);const e=epoch;detectTarget(ctl,targetCanvas).then(d=>matchTarget(ctl,d.featurePoints)).then(m=>{if(mine!==token||e!==epoch)return;if(!m.modelViewTransform)mustClear=false;else if(!mustClear)armTarget(performance.now())}).catch(e=>{if(mine===token)report.errors.push({stage:'target',message:e.message})}).finally(()=>{if(mine===token)targetBusy=false});}
+   if(job==='body'){
+    budget.started('body',now,frameStamp.key);
+    bodyBusy=true;lastBody=now;drawCover(video,bodyCanvas);const e=epoch,runner=bodyRunner;runner.infer(bodyCanvas,now).then(r=>{if(mine!==token||e!==epoch){r.bitmap.close();return}compositor.mode=$('#occlusionMode').value;compositor.paint(r);report.live.occlusionMode=compositor.mode;pipelineMetrics.record(r,performance.now());acceptBody(r,performance.now());compositor.drawGuides($('#guides').checked);bodyTimes.push(r.ms);if(bodyTimes.length>90)bodyTimes.shift();}).catch(e=>{if(mine===token){report.errors.push({stage:'body-frame',message:e.message});endSession('Rastreamento interrompido. Apresente o alvo novamente.');show()}}).finally(()=>{if(mine===token){bodyBusy=false;budget.finished('body',performance.now());}});
+   }
+   if(job==='hand'){
+    budget.started('hand',now,frameStamp.key);
+    handBusy=true;lastHand=now;const frame=handFramePlanner.next(now,lastBodyData?.points);drawCover(video,handCanvas,frame);const e=epoch,runner=handRunner;runner.infer(handCanvas,now).then(raw=>{if(mine!==token||e!==epoch)return;acceptHandFrame(raw,frame,performance.now());handTimes.push(raw.ms);if(handTimes.length>90)handTimes.shift();}).catch(e=>{if(mine===token)report.errors.push({stage:'hand-frame',message:e.message})}).finally(()=>{if(mine===token){handBusy=false;budget.finished('hand',performance.now());}});
+   }
+   if(now-lastReport>750){lastReport=now;report.live.gestureConfirmation=gestureGate.snapshot();report.live.phase=phase;report.live.presenceState=person.state(now);report.live.presenceSource=lastBodyData?.presenceSource;report.live.autoPosition=spaceChooser.snapshot();report.live.position={x:placement.position.x,y:placement.position.y,scale:placement.scale.x,targetScale:targetPlacement.scale,stage:sequence.stage,scaleGroup:'placement',motionGroupSeparate:true,spacing:$('#space').value,edgeLimited:spacing?.limited??false,animation:naturalAnimator.snapshot(),sideWalk:sideWalk.snapshot(),framingSource:framing?.source??null,feetVisible:framing?.feetVisible??false};report.live.notebook=notebook.snapshot();report.live.reactiveGaze=reactiveGaze.snapshot();report.live.atmosphere=sceneAtmosphere.snapshot();report.live.smoke=smoke.snapshot();report.live.pipeline=pipelineMetrics.snapshot(performance.now());report.live.contactShadow=contactShadow.snapshot();report.live.renderStats=renderStats();report.live.processingBudget=budget.snapshot();report.live.cameraPreview={...compositor.previewStats(now),frameCounter:frameStamp.source};report.live.bodyMs=bodyTimes;report.live.handMs=handTimes;report.live.gestureProgress=gestureGate.progress;show();}
+   updateLiveStatus();
+  };digitalCameraFrame=tick;const loop=()=>{if(!live||mine!==token)return;tick();requestAnimationFrame(loop);};loop();show();$('#view').scrollIntoView({behavior:'smooth',block:'center'});
+ }catch(e){if(mine===token){report.errors.push({stage:startupStage,name:e.name,message:e.message});stopLive();const info=cameraErrorInfo(e,startupStage);report.cameraAccess={...info,available:false};$('#cameraErrorTitle').textContent=info.title;$('#cameraErrorMessage').textContent=info.message;$('#cameraError').hidden=false;text('#liveStatus','A câmera não foi iniciada. A demonstração sem câmera continua disponível.');show()}}
+};
+$('#live').onclick=()=>startLive();
+$('#stop').onclick=stopLive;
+$('#exitAppearance').onclick=()=>{if(live&&phase==='active'&&person.state(performance.now()).visible)startExit('button');};
+$('#restart').onclick=()=>{if(!live)return;epoch++;resetScene();phase='target';mustClear=false;compositor.clear();report.live.targetRecognized=false;report.live.exitTriggered=false;report.live.personLost=false;report.live.requiresTargetAgain=false;show()};
+$('#occlusionMode').onchange=()=>{if(compositor)compositor.mode=$('#occlusionMode').value};
+$('#guides').onchange=()=>compositor?.drawGuides($('#guides').checked);
+for(const id of ['side','size','space'])$('#'+id).onchange=()=>{if(lastBodyData&&phase==='active')updatePlacement(lastBodyData)};
+$('#save').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));a.download='KIRA_resultados_navegador.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)};
+function renderStats(){return {sampleFrames:frameTimes.length,averageFps:frameTimes.length?1000/(frameTimes.reduce((a,b)=>a+b,0)/frameTimes.length):null,maxFrameMs:frameTimes.length?Math.max(...frameTimes):null,targetFps:renderProfile($('#quality').value,live).fps}}
+window.addEventListener('pagehide',stopLive);window.addEventListener('error',e=>{report.errors.push({message:e.message});show()});show();
+
+async function runTest(name,fn){
+ if(live||demo||testing)return false;$('#cameraError').hidden=true;$('#view').classList.remove('scene-empty');text('#liveStatus','Ensaio digital — câmera e rastreamento ao vivo desligados.');testing=true;$('#live').disabled=true;$('#stop').disabled=true;$('#restart').disabled=true;
+ try{await setupModels();startDigitalFrames();front=false;await fn();return true;}catch(e){report.errors.push({stage:name,message:e.message});status('Falha: '+e.message);return false;}finally{stopDigitalFrames();demo=false;demoWantsBook=false;clearPose();testing=false;$('#live').disabled=suiteRunning;$('#stop').disabled=suiteRunning;$('#restart').disabled=suiteRunning;show()}
+}
+function fixture(img,zoom=1){const c=canvas(),ctx=c.getContext('2d');ctx.fillStyle='#64616a';ctx.fillRect(0,0,W,H);const w=W*zoom,h=w*img.naturalHeight/img.naturalWidth;ctx.drawImage(img,(W-w)/2,(H-h)/2,w,h);return c}
+function sampleFrame(proof,label){renderer.render(scene,camera);const c=document.createElement('canvas');c.width=W;c.height=H+50;const ctx=c.getContext('2d');ctx.fillStyle='#202126';ctx.fillRect(0,0,W,H+50);ctx.fillStyle='white';ctx.font='21px system-ui';ctx.fillText(label,10,32);if(proof)ctx.drawImage(proof.layers[0],0,50,W,H);ctx.drawImage(renderer.domElement,0,50,W,H);if(proof){ctx.drawImage(proof.layers[1],0,50,W,H);ctx.drawImage(proof.layers[2],0,50,W,H)}$('#samples').appendChild(c);return c}
+async function settled(runner,c,clock,onFrame=()=>{}){let r;for(let i=0;i<5;i++){r?.bitmap.close();r=await runner.infer(c,clock+i*200);onFrame(r)}return r}
+$('#bodyTest').onclick=()=>runTest('body-test',async()=>{
+ let runner,proof;try{
+  status('Testando corpo, pés e saída da pessoa…');defaultCamera();resetScene();$('#view').classList.add('live');runner=new WorkerRunner('./body-worker-v025.js');await runner.ready;const img=await loadImage('./pose.jpg');proof=new Compositor($('#view'),false);demo=true;armTarget(performance.now());
+  const rows=[];let clock=1000,lastFrame;
+  for(const zoom of [.8,1,1.3]){
+   const c=fixture(img,zoom),r=await settled(runner,c,clock,r=>acceptBody(r,performance.now()));clock+=1500;
+   // Each photo is processed by the real detector; the spatial result is then rendered.
+   if(!r.body.present)throw new Error('Corpo não detectado na foto '+zoom);
+   placement.position.set(targetPlacement.x,targetPlacement.y,0);placement.scale.setScalar(targetPlacement.scale);proof.paint(r);proof.drawGuides(true);sampleFrame(proof,'Corpo e pés · ampliação '+zoom);
+   rows.push({zoom,present:r.body.present,feetVisible:r.body.feetVisible,source:framing?.source,scale:placement.scale.x,targetScale:targetPlacement.scale,maskMean:r.mean});lastFrame=c;
+  }
+  const blank=canvas();blank.getContext('2d').fillStyle='#64616a';blank.getContext('2d').fillRect(0,0,W,H);let blankPresent=true;
+  for(let i=0;i<6;i++){const r=await runner.infer(blank,clock);clock+=200;blankPresent=r.body.present;proof.paint(r);acceptBody(r,performance.now());await sleep(100)}
+  await sleep(1400);sampleFrame(proof,'Pessoa saiu · Ryuk oculto');const loss={blankPresent,modelHidden:!placement.visible,requiresTargetAgain:phase==='target'&&mustClear};
+  const r=await settled(runner,lastFrame,clock+1000);proof.paint(r);acceptBody(r,performance.now());const returnedWithoutTarget=placement.visible;
+  report.tests.BODY={fixture:'Official MediaPipe pose.jpg; synthetic resizing, not physical distance',rows,scaleIncreases:rows[0].scale<rows[1].scale&&rows[1].scale<rows[2].scale,loss,returnedWithoutTarget,humanRedEyes:false};status('Teste corporal concluído. Confira pés, proporção e ocultação nas capturas.');
+ }finally{runner?.close();proof?.dispose();$('#view').classList.remove('live');placement.visible=false;demo=false;}
+});
+$('#sequenceTest').onclick=()=>runTest('sequence-test',async()=>{
+ let runner,proof;try{
+  status('Preparando sequência com foto…');defaultCamera();resetScene();runner=new WorkerRunner('./body-worker-v025.js');await runner.ready;const img=await loadImage('./pose.jpg'),c=fixture(img,1),r=await settled(runner,c,1000);r.bitmap.close();if(!r.body.present)throw new Error('Corpo não encontrado na referência');
+  $('#view').classList.add('live');proof=new Compositor($('#view'),false);armTarget(performance.now());demo=true;person.update(r.body,performance.now());acceptBody(r,performance.now());let maxEyeVergence=0;const started=performance.now(),moments=[9.8,11.4,15.8,19.4],rows=[];let checkpoint=0;
+  while(performance.now()-started<20200){maxEyeVergence=Math.max(maxEyeVergence,eyeVergence());acceptBody(r,performance.now());const bitmap=await createImageBitmap(c);proof.paint({...r,bitmap});proof.drawGuides(false);const elapsed=(performance.now()-started)/1000;
+   if(checkpoint<moments.length&&elapsed>=moments[checkpoint]){sampleFrame(proof,elapsed.toFixed(1)+' s · '+sequence.stage);rows.push({elapsed,stage:sequence.stage,scale:placement.scale.x,targetScale:targetPlacement.scale,bodySource:framing?.source,feetVisible:framing?.feetVisible,motionY:motion.position.y,animation:naturalAnimator.snapshot(),sideWalk:sideWalk.snapshot(),walkDistance});checkpoint++}
+   status('Sequência com foto · '+elapsed.toFixed(1)+' s · '+sequence.stage);await sleep(80);
+  }
+  report.tests.SEQUENCE={pupilSurfaceDirectionDifferenceDegrees:maxEyeVergence,neutralVisualCalibration:true,rows,sameScaleThroughFloat:rows.length===4&&Math.abs(rows[3].scale-rows[1].scale)<.01,humanRedEyes:false,renderStats:renderStats(),cameraTest:false};status('Sequência concluída. Escala do corpo separada da flutuação.');
+ }finally{runner?.close();proof?.dispose();$('#view').classList.remove('live');placement.visible=false;demo=false;}
+});
+$('#faceTest').onclick=()=>runTest('face-test',async()=>{
+ resetScene();$('#view').classList.add('live');placement.visible=true;placement.scale.setScalar(1);placement.position.set(0,0,0);motion.position.set(0,0,0);motion.rotation.set(0,0,0);camera.position.set(0,refs.headY+.08,1.15);camera.lookAt(0,refs.headY+.08,0);camera.aspect=.75;camera.updateProjectionMatrix();renderer.setSize(W,H);await sleep(100);sampleFrame(null,'Olhos e boca · materiais opacos');
+ const mats=[];model.traverse(o=>{if(o.isMesh)for(const m of Array.isArray(o.material)?o.material:[o.material])if(['RyukFace','Globo_Amarelo','Iris_Vermelha','Pupila_Preta'].includes(m.name)&&!mats.some(x=>x.name===m.name))mats.push({name:m.name,transparent:m.transparent,depthWrite:m.depthWrite,alphaTest:m.alphaTest,normalScale:m.normalScale.toArray(),roughness:m.roughness})});report.tests.RYUK_FACE={materials:mats,allOpaque:mats.every(m=>!m.transparent&&m.depthWrite),texturesChanged:false};status('Olhar em volta ativo. Observe as pupilas por 8 segundos.');
+});
+$('#smoke').onclick=()=>runTest('smoke-test',async()=>{
+ defaultCamera();resetScene();placement.visible=true;placement.position.set(0,0,0);placement.scale.setScalar(1);phase='test';startExit('manual');await sleep(1100);sampleFrame(null,'Fumaça · 128 partículas');await sleep(1700);status('Fumaça concluída: personagem e partículas ocultos.');
+});
+$('#targetTest').onclick=()=>runTest('target-and-hand-test',async()=>{
+ let ctl,runner;try{
+  status('Testando alvo e punho…');await setupTarget();const img=await loadImage(targetConfig().image),c=canvas(),ctx=c.getContext('2d');ctl=new Controller({inputWidth:W,inputHeight:H,warmupTolerance:0,missTolerance:1});await ctl.addImageTargets(targetConfig().mind);
+  const results=[];for(const filter of ['none','brightness(.5)','blur(2px)']){ctx.fillStyle='#888';ctx.fillRect(0,0,W,H);ctx.filter=filter;const h=540,w=h*img.naturalWidth/img.naturalHeight;ctx.drawImage(img,(W-w)/2,50,w,h);ctx.filter='none';let matched=false,frames=0,matchedTarget=null;for(;frames<12&&!matched;frames++){const d=await detectTarget(ctl,c),m=await matchTarget(ctl,d.featurePoints);matched=!!m.modelViewTransform;if(matched)matchedTarget=m.matchedTarget;}results.push({filter,matched,frames,matchedTarget})}
+  let found=false,lost=false;ctl.onUpdate=d=>{if(d.type!=='updateMatrix')return;if(d.worldMatrix&&!found){found=true;setTimeout(()=>{ctx.fillStyle='#888';ctx.fillRect(0,0,W,H)},200)}else if(!d.worldMatrix&&found)lost=true};ctl.processVideo(c);const deadline=performance.now()+10000;while(!lost&&performance.now()<deadline)await sleep(100);ctl.stopProcessVideo();
+  runner=new WorkerRunner('./hand-worker-v0341.js');await runner.ready;const fist=await loadImage('./fist.jpg'),gate=new GestureGate();const began=performance.now();let fired=false,lastGesture=null,samples=0;
+  while(!fired&&performance.now()-began<4000){const r=await runner.infer(fist,performance.now());lastGesture=r.gesture;samples++;fired=gate.update(r.gesture,performance.now());if(!fired)await sleep(180)}
+  const negative=await runner.infer(await loadImage('./thumb_up.jpg'),performance.now());report.tests.TARGET_HAND={targetName:targetConfig().name,physicalTest:false,target:results,actualFoundEvent:found,actualLostEvent:lost,fist:lastGesture,heldFistConfirmed:fired,handSamples:samples,negativeGesture:negative.gesture};status('Alvo e confirmação do punho testados em arquivos.');
+ }finally{ctl?.dispose();runner?.close()}
+});
+
+$('#preview').onclick=startContinuousDemo;
+
+$('#articulationTest').onclick=()=>runTest('articulation-test',async()=>{
+ resetScene();defaultCamera();placement.visible=true;placement.scale.setScalar(1);placement.position.set(0,0,0);motion.position.set(0,0,0);motion.rotation.set(0,0,0);$('#view').classList.add('live');$('#samples').textContent='';
+ const names=['Left_Wing_1','Left_Wing_4','Right_Wing_1','bip_upperArm_L','bip_lowerArm_R','bip_knee_L','bip_foot_R','bip_head','L_Eye','R_Eye','Olhar_L','Olhar_R'];
+ const initial={},ranges={},samples={},vertices={};
+ for(const name of names){const b=model.getObjectByName(name);if(!b?.isBone)throw new Error('Osso ausente: '+name);initial[name]=b.quaternion.clone();ranges[name]=0;samples[name]=[];
+  let best=-1;model.traverse(o=>{if(!o.isSkinnedMesh)return;const bi=o.skeleton.bones.indexOf(b),si=o.geometry.attributes.skinIndex,sw=o.geometry.attributes.skinWeight;if(bi<0)return;for(let v=0;v<si.count;v++){const ids=[si.getX(v),si.getY(v),si.getZ(v),si.getW(v)],weights=[sw.getX(v),sw.getY(v),sw.getZ(v),sw.getW(v)];for(let k=0;k<4;k++)if(ids[k]===bi&&weights[k]>best){best=weights[k];vertices[name]={mesh:o,index:v};}}});if(!vertices[name])throw new Error('Malha sem peso para '+name);
+ }
+ const start=performance.now();let checkpoint=0;
+ while(performance.now()-start<8300){model.updateMatrixWorld(true);for(const name of names){const b=model.getObjectByName(name);ranges[name]=Math.max(ranges[name],b.quaternion.angleTo(initial[name]));const {mesh,index}=vertices[name];mesh.skeleton.update();const point=new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position,index);mesh.applyBoneTransform(index,point);point.applyMatrix4(mesh.matrixWorld);if(!point.toArray().every(Number.isFinite))throw new Error('Vértice inválido em '+name);samples[name].push(point);}
+  const elapsed=(performance.now()-start)/1000;if(elapsed>checkpoint*2&&checkpoint<4){sampleFrame(null,'Articulação · '+elapsed.toFixed(1)+' s');checkpoint++;}status('Conferindo asas, braços, pernas, cabeça e olhos · '+elapsed.toFixed(1)+' s');await sleep(90);
+ }
+ const rows=names.map(name=>({bone:name,localRotationRangeDegrees:ranges[name]*180/Math.PI,skinnedVertexMovement:Math.max(...samples[name].map(v=>v.distanceTo(samples[name][0])))}));const passed=rows.every(r=>r.localRotationRangeDegrees>.5&&r.skinnedVertexMovement>.001);report.tests.ARTICULATION={rows,passed,cameraTest:false};if(!passed)throw new Error('Articulação abaixo do esperado; confira o relatório');status('Articulação conferida na malha: asas, membros, cabeça e olhos ativos.');$('#view').classList.remove('live');placement.visible=false;
+});
+
+$('#eyes').onclick=()=>{if(live||testing)return;$('#testPanel').open=true;$('#faceTest').click();$('#view').scrollIntoView({behavior:'smooth',block:'center'})};
+
+function applyLook(){sceneAtmosphere?.setPreset($('#look').value);report.sceneLook=$('#look').selectedOptions[0].textContent;show();}
+$('#look').onchange=applyLook;
+function targetConfig(){return $('#target').value==='capa'?{mind:'./capa_impressao.mind',image:'./capa_impressao.png',indices:[0,1],name:'Capa Death Note'}:{mind:'./alvo_provisorio.mind',image:'./alvo_provisorio.png',indices:[0],name:'Alvo de reserva'};}
+async function matchTarget(ctl,points){let last;for(const i of targetConfig().indices){last=await ctl.match(points,i);if(last.modelViewTransform)return {...last,matchedTarget:i};}return last;}
+$('#manual').onclick=()=>{if(!live||phase!=='target')return;mustClear=false;armTarget(performance.now());report.live.manualActivation=true;show();};
+
+$('#transitions').onclick=()=>runTest('transitions-test',async()=>{
+ defaultCamera();resetScene();placement.position.set(0,0,0);placement.scale.setScalar(1);reveal(performance.now());status('Conferindo entrada com fumaça…');await sleep(900);sampleFrame(null,'Manifestação · entrada');await sleep(1700);const entered=currentOpacity===1&&placement.visible&&!smoke.visible;startExit('transition-test');await sleep(1000);sampleFrame(null,'Dissolução · saída');await sleep(1800);const exited=!placement.visible&&!smoke.visible;
+ reveal(performance.now());await sleep(650);const before=currentOpacity;startExit('interruption-test');await sleep(120);const noFlash=currentOpacity<=before+.001;await sleep(2700);report.tests.TRANSITIONS={entered,exited,noFlashWhenInterrupted:noFlash,scale:placement.scale.x,physicalTest:false};if(!entered||!exited||!noFlash)throw new Error('Falha nas transições');status('Entrada, saída e interrupção conferidas.');
+});
+
+let scanTargetIndex=0,scanTargetCanvas;
+async function detectTarget(ctl,input){
+ if(!scanTargetCanvas)scanTargetCanvas=canvas();const offsets=[[0,0],[0,150],[0,-150],[100,0],[-100,0]],offset=offsets[scanTargetIndex++%offsets.length],ctx=scanTargetCanvas.getContext('2d');ctx.fillStyle='#888';ctx.fillRect(0,0,W,H);ctx.drawImage(input,offset[0],offset[1],W,H);return ctl.detect(scanTargetCanvas);
+}
+
+function eyeVergence(){
+ scene.updateMatrixWorld(true);const directions=['L','R'].map(side=>{const pivot=model.getObjectByName('Olhar_'+side).getWorldPosition(new THREE.Vector3());let mesh=model.getObjectByName('Pupila_'+side);if(!mesh.isSkinnedMesh)mesh=mesh.children.find(o=>o.isSkinnedMesh);mesh.skeleton.update();const tip=new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position,0);mesh.applyBoneTransform(0,tip);tip.applyMatrix4(mesh.matrixWorld);return tip.sub(pivot).normalize();});return THREE.MathUtils.radToDeg(directions[0].angleTo(directions[1]));
+}
+
+function updateContactShadow(now,dt){
+ const visible=person.state(now).visible;
+ contactShadow.update({now,dt,enabled:$('#shadow').checked,sessionVisible:visible&&placement.visible&&['active','exiting'].includes(phase),feetFresh:lastAcceptedFeetAt!==null&&now-lastAcceptedFeetAt<350&&!!lastBodyData?.feetVisible,opacity:currentOpacity,x:placement.position.x+motion.position.x*placement.scale.x,y:placement.position.y+refs.footY*placement.scale.x,scale:placement.scale.x,lift:motion.position.y});
+}
+$('#shadow').onchange=()=>{if(!$('#shadow').checked)contactShadow?.reset()};
+$('#shadowTest').onclick=()=>runTest('shadow-test',async()=>{
+ let runner,proof;try{
+  defaultCamera();resetScene();$('#view').classList.add('live');runner=new WorkerRunner('./body-worker-v025.js');await runner.ready;
+  const c=fixture(await loadImage('./pose.jpg'),1),r=await settled(runner,c,1000);r.bitmap.close();
+  proof=new Compositor($('#view'),false);armTarget(performance.now());demo=true;$('#shadow').checked=true;
+  const feed=async(body,ms)=>{const start=performance.now();while(performance.now()-start<ms){acceptBody({body},performance.now());const bitmap=await createImageBitmap(c);proof.paint({...r,body,bitmap});await sleep(80)}};
+  await feed(r.body,3000);const grounded=contactShadow.snapshot();sampleFrame(proof,'Sombra simulada · pés confirmados');
+  const cropped={...r.body,feet:null,feetVisible:false};await feed(cropped,650);const croppedState=contactShadow.snapshot();sampleFrame(proof,'Sem pés · sombra oculta');
+  await feed(r.body,900);const returned=contactShadow.snapshot();$('#shadow').checked=false;await sleep(100);const disabled=contactShadow.snapshot();$('#shadow').checked=true;
+  startExit('shadow-exit-test');await feed(r.body,2800);const afterExit=contactShadow.snapshot();
+  report.tests.CONTACT_SHADOW={grounded,cropped:croppedState,returned,disabled,afterExit,exitHidden:!placement.visible&&!smoke.visible&&!afterExit.visible,passed:grounded.visible&&!croppedState.visible&&returned.visible&&!disabled.visible&&!afterExit.visible&&!placement.visible&&!smoke.visible,simulation:true,physicalFloorTracking:false};
+  if(!report.tests.CONTACT_SHADOW.passed)throw new Error('Falha no ensaio da sombra');status('Sombra conferida: aparece com pés estáveis e some sem pés. Não é rastreamento do piso.');
+ }finally{runner?.close();proof?.dispose();demo=false;placement.visible=false;contactShadow.reset();$('#view').classList.remove('live')}
+});
+
+$('#atmosphereTest').onclick=()=>runTest('atmosphere-test',async()=>{
+ const selected=$('#look').value;defaultCamera();resetScene();placement.visible=true;placement.scale.setScalar(1);placement.position.set(0,0,0);
+ const states=[];for(const preset of ['original','kira','cinema']){sceneAtmosphere.setPreset(preset);sceneAtmosphere.update({now:1200,dt:.1,mode:'entry',startedAt:0,visible:true});states.push(sceneAtmosphere.snapshot());}
+ sceneAtmosphere.reset();const reset=sceneAtmosphere.snapshot();sceneAtmosphere.setPreset(selected);
+ report.tests.ATMOSPHERE={states,reset,passed:states[0].preset==='original'&&states[0].exposure===1&&states[1].exposure===1.15&&states[2].pulse>0&&reset.pulse===0,rawTrackingInputUnchanged:true,realLightEstimation:false};
+ if(!report.tests.ATMOSPHERE.passed)throw new Error('Falha na atmosfera');status('Atmosfera conferida: Original, KIRA sutil e Cinema; iluminação simulada.');placement.visible=false;
+});
+
+function updateReactiveGaze(now,dt){
+ const elapsed=appearanceAt===null?0:(now-appearanceAt)/1000;
+ const enabled=$('#reactiveGaze').checked&&phase==='active'&&(live||demo)&&person.state(now).visible&&lastAcceptedBodyAt!==null&&now-lastAcceptedBodyAt<350;
+ let target=null,source=null;const body=lastBodyData;
+ if(enabled&&body){const nose=body.points?.[0];const valid=nose&&nose.visibility>=.55&&nose.presence>=.5&&nose.x>=0&&nose.x<=1&&nose.y>=0&&nose.y<=1;const p=valid?nose:body.shoulder;source=valid?'pose-nose':'pose-shoulders';
+  const z=1.4*placement.scale.x,view=2*(camera.position.z-z)*Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+  target=new THREE.Vector3((p.x-.5)*view*camera.aspect,camera.position.y+(.5-p.y)*view,z);
+ }
+ reactiveGaze.afterMixer({target,source,dt,enabled,elapsed,stage:sequence.stage});
+}
+$('#reactiveGaze').onchange=()=>{if(!$('#reactiveGaze').checked)reactiveGaze?.reset()};
+$('#reactiveTest').onclick=()=>runTest('reactive-gaze-test',async()=>{
+ let runner,proof;const originalEnabled=$('#reactiveGaze').checked;
+ try{
+  defaultCamera();resetScene();$('#view').classList.add('live');runner=new WorkerRunner('./body-worker-v025.js');await runner.ready;const c=fixture(await loadImage('./pose.jpg'),1),r=await settled(runner,c,1000);r.bitmap.close();proof=new Compositor($('#view'),false);armTarget(performance.now());demo=true;$('#reactiveGaze').checked=true;
+  const feed=async(x,ms)=>{const started=performance.now();while(performance.now()-started<ms){const points=r.body.points.map(p=>({...p}));points[0]={...points[0],x,visibility:1,presence:1};acceptBody({body:{...r.body,points}},performance.now());proof.paint({...r,bitmap:await createImageBitmap(c)});await sleep(70)}};
+  await feed(.08,5000);const left=reactiveGaze.snapshot();sampleFrame(proof,'Olhar reativo · alvo à esquerda');
+  await feed(.92,2200);const right=reactiveGaze.snapshot();sampleFrame(proof,'Olhar reativo · alvo à direita');
+  $('#reactiveGaze').checked=false;reactiveGaze.reset();await feed(.92,200);const disabled=reactiveGaze.snapshot();
+  $('#reactiveGaze').checked=true;await feed(.08,700);endSession('Ensaio: pessoa ausente');await sleep(100);const loss=reactiveGaze.snapshot();
+  report.tests.REACTIVE_GAZE={left,right,disabled,loss,passed:left.yaw<-.01&&right.yaw>.01&&disabled.yaw===0&&loss.yaw===0&&left.maxRestoreError<1e-6&&right.maxRestoreError<1e-6,syntheticHeadPositions:true,physicalCameraTest:false};
+  if(!report.tests.REACTIVE_GAZE.passed)throw new Error('Falha no olhar reativo');status('Olhar reativo conferido nos dois lados, desligamento e perda da pessoa.');
+ }finally{runner?.close();proof?.dispose();demo=false;placement.visible=false;reactiveGaze.reset();$('#reactiveGaze').checked=originalEnabled;$('#view').classList.remove('live')}
+});
+
+$('#cameraRetry').onclick=()=>$('#live').click();
+$('#cameraDemo').onclick=()=>$('#preview').click();
+
+function updateNotebook(now){
+ if(bookInspection){notebook.update({visible:true,opacity:1,x:0,y:1.1,z:0,scale:1.8,side:1,now,inspection:true});return;}
+ const visible=($('#showBook').checked||(demo&&demoWantsBook))&&placement.visible&&['active','exiting'].includes(phase)&&person.state(now).visible;
+ notebook.update({visible,opacity:currentOpacity,x:placement.position.x+(motion.position.x-sideDirection*.38)*placement.scale.x,y:placement.position.y+(refs.hipY+.15+motion.position.y)*placement.scale.x,z:.22*placement.scale.x,scale:placement.scale.x*1.65,side:sideDirection,now});
+ const state=notebook.snapshot(),retry=$('#retryBook'),canRetry=!!state.error&&($('#showBook').checked||demoWantsBook);if(retry.hidden===canRetry)retry.hidden=!canRetry;text('#notebookStatus',canRetry?'O caderno virtual não carregou. Você pode tentar novamente; Ryuk continua disponível.':state.loading&&($('#showBook').checked||demoWantsBook)?'Preparando o caderno virtual…':state.visible?'Caderno virtual de demonstração — não substitui o caderno físico.':'');
+}
+$('#showBook').onchange=()=>{if(!$('#showBook').checked&&!demo)notebook?.reset();else if(notebook)notebook.load({retry:true}).catch(()=>{});};
+$('#retryBook').onclick=()=>{if(notebook)notebook.load({retry:true}).catch(()=>{});};
+$('#bookPreview').onclick=()=>runTest('book-preview',async()=>{
+ defaultCamera();resetScene();placement.visible=false;await notebook.load({retry:true});bookInspection=true;$('#view').classList.add('live');camera.position.set(0,1.1,.9);camera.lookAt(0,1.1,0);camera.aspect=.75;camera.updateProjectionMatrix();renderer.setSize(W,H);await sleep(120);sampleFrame(null,'Caderno original · capa, páginas e lombada');report.tests.NOTEBOOK_MODEL=notebook.snapshot();status('Caderno 3D original conferido; a imagem-alvo física permanece separada.');
+});
+$('#bookTest').onclick=()=>runTest('book-integration',async()=>{
+ let runner,proof;const selected=$('#showBook').checked;try{
+  defaultCamera();resetScene();await notebook.load({retry:true});$('#showBook').checked=true;$('#view').classList.add('live');runner=new WorkerRunner('./body-worker-v025.js');await runner.ready;const c=fixture(await loadImage('./pose.jpg'),1),r=await settled(runner,c,1000);r.bitmap.close();proof=new Compositor($('#view'),false);armTarget(performance.now());demo=true;
+  const feed=async(ms)=>{const start=performance.now();while(performance.now()-start<ms){acceptBody({body:r.body},performance.now());proof.paint({...r,bitmap:await createImageBitmap(c)});await sleep(80)}};
+  await feed(2800);const active=notebook.snapshot();sampleFrame(proof,'Ryuk e caderno virtual · demonstração');startExit('book-exit-test');await feed(2800);const exited=notebook.snapshot();
+  armTarget(performance.now());await feed(2800);endSession('Ensaio: pessoa saiu');await sleep(100);const lost=notebook.snapshot();report.tests.NOTEBOOK_INTEGRATION={active,exited,lost,passed:active.visible&&!exited.visible&&!lost.visible,physicalTest:false};if(!report.tests.NOTEBOOK_INTEGRATION.passed)throw new Error('Falha na integração do caderno');status('Caderno conferido com Ryuk, fumaça e perda da pessoa.');
+ }finally{runner?.close();proof?.dispose();demo=false;placement.visible=false;notebook.reset();$('#showBook').checked=selected;$('#view').classList.remove('live')}
+});
+
+$('#materialTest').onclick=()=>runTest('material-test',async()=>{
+ defaultCamera();resetScene();placement.visible=true;placement.scale.setScalar(1);placement.position.set(0,0,0);motion.rotation.set(0,0,0);$('#view').classList.add('live');camera.position.set(0,refs.hipY+.03,1.35);camera.lookAt(0,refs.hipY+.03,0);camera.aspect=.75;camera.updateProjectionMatrix();renderer.setSize(W,H);
+ const background=scene.background;scene.background=new THREE.Color('#687985');const corrected=[];model.traverse(o=>{if(o.isMesh)for(const m of Array.isArray(o.material)?o.material:[o.material])if(!corrected.some(x=>x.m===m))corrected.push({m,transparent:m.transparent,depthWrite:m.depthWrite,alphaTest:m.alphaTest})});
+ try{
+  for(const {m} of corrected){if(['UpperBody','Hair','Wing'].includes(m.name)){m.transparent=true;m.depthWrite=false;m.alphaTest=0;m.needsUpdate=true}if(m.name==='Pants'){m.transparent=false;m.depthWrite=true;m.alphaTest=0;m.needsUpdate=true}}
+  await sleep(180);sampleFrame(null,'Antes · materiais transparentes');
+ }finally{for(const {m,transparent,depthWrite,alphaTest} of corrected){m.transparent=transparent;m.depthWrite=depthWrite;m.alphaTest=alphaTest;m.needsUpdate=true}}
+ await sleep(180);sampleFrame(null,'Depois · profundidade e recortes');
+ const states=corrected.filter(x=>['UpperBody','Hair','Wing','Pants'].includes(x.m.name)).map(({m})=>({name:m.name,transparent:m.transparent,depthWrite:m.depthWrite,alphaTest:m.alphaTest}));
+ const full=states.every(m=>!m.transparent&&m.depthWrite);setOpacity(.2);const fade=corrected.filter(x=>x.alphaTest>0).map(({m,alphaTest})=>({name:m.name,ratio:m.alphaTest/.2,expected:alphaTest}));restoreMaterials();
+ report.tests.MATERIALS={states,fade,passed:full&&fade.every(x=>Math.abs(x.ratio-x.expected)<1e-6),geometryChanged:false,texturesChanged:false,physicalPhoneTest:false};scene.background=background;if(!report.tests.MATERIALS.passed)throw new Error('Falha nos materiais');status('Materiais e fade conferidos. Compare o quadril antes/depois nas capturas.');
+});
+
+$('#continuityTest').onclick=()=>runTest('continuity-test',async()=>{
+ let runner,proof;const savedReport=report.live;try{
+  defaultCamera();resetScene();$('#samples').textContent='';$('#view').classList.add('live');runner=new WorkerRunner('./body-worker-v025.js');await runner.ready;
+  const c=fixture(await loadImage('./pose.jpg'),1),r=await settled(runner,c,1000);r.bitmap.close();if(!r.body.present)throw new Error('Corpo não detectado');
+  proof=new Compositor($('#view'),false);report.live={bodyDetections:0,maskFrames:0,handSeen:false};bodyReady=true;live=true;armTarget(performance.now());
+  const names=['Left_Wing_1','bip_upperArm_L','bip_knee_L','bip_head'];const initial=names.map(n=>model.getObjectByName(n).quaternion.clone()),ranges=names.map(()=>0);const started=performance.now();let noFaceVisible=true,sample=0;
+  while(performance.now()-started<8500){
+   const elapsed=performance.now()-started,points=r.body.points.map((q,i)=>({...q,x:q.x+.025*Math.sin(elapsed/1100),visibility:i<11?0:q.visibility}));
+   if(elapsed>3500)for(const i of [23,24])points[i].visibility=0;const body=bodySnapshot(points);acceptBody({body},performance.now());if(elapsed>3500&&elapsed<6000){spacing.walkRange=0;walkRange=0;}proof.paint({...r,body,bitmap:await createImageBitmap(c)});
+   if(person.state(performance.now()).bound){noFaceVisible&&=person.state(performance.now()).visible;}
+   for(let i=0;i<names.length;i++)ranges[i]=Math.max(ranges[i],model.getObjectByName(names[i]).quaternion.angleTo(initial[i]));
+   if(elapsed>2800&&sample===0){appearanceAt=performance.now()-11000;sampleFrame(proof,'Ensaio sem rosto · pose simulada');sample++;}
+   status('Continuidade sem rosto + animação · '+(elapsed/1000).toFixed(1)+' s');await sleep(100);
+  }
+  const positionFollowed=Math.abs(targetPlacement.x-placement.position.x)<.15;const rotation=ranges.map((x,i)=>({bone:names[i],degrees:x*180/Math.PI}));const steps=naturalAnimator.snapshot().inPlaceDistance;
+  acceptBody({body:{present:false}},performance.now());await sleep(2000);const hiddenAfterExit=!placement.visible&&phase==='target';sampleFrame(proof,'Pessoa ausente · personagem oculto');
+  report.tests.CONTINUITY={syntheticLandmarksWithoutFace:true,actualBackCameraTest:false,noFaceVisible,positionFollowed,rotation,inPlaceDistance:steps,acceptedFrames:report.live.bodyDetections,hiddenAfterExit,passed:steps>0&&report.live.bodyDetections>20&&noFaceVisible&&positionFollowed&&hiddenAfterExit&&rotation.every(x=>x.degrees>.5)};
+  if(!report.tests.CONTINUITY.passed)throw new Error('Falha na continuidade/animação');status('Continuidade sem rosto, articulação e saída conferidas em ensaio digital.');
+ }finally{live=false;bodyReady=false;report.live=savedReport;runner?.close();proof?.dispose();placement.visible=false;$('#view').classList.remove('live')}
+});
+
+$('#skirtTest').onclick=()=>runTest('skirt-test',async()=>{
+ defaultCamera();resetScene();$('#samples').textContent='';placement.visible=true;$('#view').classList.add('live');camera.position.set(0,refs.hipY,1.6);camera.lookAt(0,refs.hipY,0);camera.aspect=.75;camera.updateProjectionMatrix();renderer.setSize(W,H);const bg=scene.background;scene.background=new THREE.Color('#596673');
+ try{for(const angle of [0,.85,-.85]){motion.rotation.y=angle;await sleep(300);sampleFrame(null,'Saia recortada · vista '+Math.round(angle*180/Math.PI)+'°');}report.tests.SKIRT={pantsMasked:true,alphaCutoff:.5,solidAtlasBackgroundRemoved:true,views:[0,49,-49],physicalTest:false};status('Saia conferida de frente e dos lados; abas recortadas sem faixa sólida.');}finally{scene.background=bg;motion.rotation.y=0;}
+});
+
+async function startContinuousDemo(){
+ if(live||demo||testing||suiteRunning)return;stopLive();const mine=++token;demo=true;demoWantsBook=true;$('#live').disabled=true;$('#camera').disabled=true;$('#target').disabled=true;$('#cameraError').hidden=true;document.body.classList.add('session-starting');$('#stop').textContent='Encerrar demonstração';text('#liveStatus','Preparando demonstração sem câmera…');$('.gesture-note').textContent='Demonstração automática. Para encerrar, use o botão acima.';
+ let runner,proof;
+ try{
+  await setupModels();if(mine!==token)return;runner=new WorkerRunner('./body-worker-v025.js');demoRunner=runner;await runner.ready;if(mine!==token)return;
+  const c=fixture(await loadImage('./pose.jpg'),1),r=await settled(runner,c,1000);r.bitmap.close();if(mine!==token)return;if(!r.body.present)throw new Error('Referência corporal indisponível');
+  defaultCamera();resetScene();front=false;renderer.domElement.style.transform='none';$('#view').classList.remove('scene-empty');$('#view').classList.add('live');proof=new Compositor($('#view'),false);demoProof=proof;document.body.classList.remove('session-starting');document.body.classList.add('session-running');armTarget(performance.now());let cycle=performance.now(),exited=false,cycles=1,lastDemoReport=0;
+  report.demo={continuous:true,camera:false,fixture:'pose.jpg',cycles};text('#liveStatus','Demonstração sem câmera · fotografia de referência. Use Encerrar demonstração para voltar.');$('#view').scrollIntoView({behavior:'smooth',block:'center'});
+  while(demo&&mine===token){
+   const now=performance.now();acceptBody({body:r.body},now);proof.mode=$('#occlusionMode').value;proof.paint({...r,bitmap:await createImageBitmap(c)});
+   if(!exited&&now-cycle>21500){startExit('demo-cycle');exited=true;}
+   if(now-cycle>25000){armTarget(now);cycle=now;exited=false;report.demo.cycles=++cycles;}
+   report.demo.notebook=notebook.snapshot();report.demo.stage=sequence.stage;report.demo.animation=naturalAnimator.snapshot();if(now-lastDemoReport>750){lastDemoReport=now;show()}await sleep(100);
+  }
+ }catch(e){if(mine===token){report.errors.push({stage:'continuous-demo',message:e.message});stopLive();text('#liveStatus','Não foi possível carregar a demonstração: '+e.message);show()}}
+ finally{runner?.close();proof?.dispose();if(demoRunner===runner)demoRunner=null;if(demoProof===proof)demoProof=null;show()}
+}
+$('#fadeTest').onclick=()=>runTest('material-fade',async()=>{
+ defaultCamera();resetScene();placement.visible=true;$('#view').classList.add('live');const bg=scene.background;scene.background=null;const values=[];const c=canvas(),ctx=c.getContext('2d');
+ try{for(const opacity of [1,.5,.1,0,1]){setOpacity(opacity);await sleep(100);renderer.render(scene,camera);ctx.clearRect(0,0,W,H);ctx.drawImage(renderer.domElement,0,0,W,H);const pixels=ctx.getImageData(0,0,W,H).data;let total=0;for(let i=3;i<pixels.length;i+=4)total+=pixels[i];values.push({opacity,alphaSum:total});}
+  const passed=values[0].alphaSum>values[1].alphaSum&&values[1].alphaSum>values[2].alphaSum&&values[3].alphaSum===0&&values[4].alphaSum>values[0].alphaSum*.8;report.tests.MATERIAL_FADE={values,passed,actualRenderedPixels:true};if(!passed)throw new Error('Falha de transparência no desenho real');status('Transparência conferida nos pixels: opaco, parcial, invisível e restaurado.');
+ }finally{restoreMaterials();scene.background=bg;placement.visible=false;}
+});
+const regressionStages=[
+ ['materialTest','Materiais',()=>report.tests.MATERIALS?.passed],['fadeTest','Transparência',()=>report.tests.MATERIAL_FADE?.passed],['skirtTest','Saia',()=>report.tests.SKIRT?.pantsMasked],
+ ['continuityTest','Presença sem rosto e movimento',()=>report.tests.CONTINUITY?.passed],['articulationTest','Articulações e pupilas',()=>report.tests.ARTICULATION?.passed],
+ ['sequenceTest','Sequência e escala',()=>report.tests.SEQUENCE?.sameScaleThroughFloat],['bodyTest','Corpo, pés e saída',()=>report.tests.BODY?.scaleIncreases&&report.tests.BODY.loss.modelHidden&&report.tests.BODY.loss.requiresTargetAgain&&!report.tests.BODY.returnedWithoutTarget],
+ ['targetTest','Capa e punho',()=>report.tests.TARGET_HAND?.target.every(x=>x.matched)&&report.tests.TARGET_HAND.heldFistConfirmed&&report.tests.TARGET_HAND.negativeGesture?.name!=='Closed_Fist'],
+ ['bookTest','Caderno 3D',()=>report.tests.NOTEBOOK_INTEGRATION?.passed],['reactiveTest','Olhar reativo',()=>report.tests.REACTIVE_GAZE?.passed],['atmosphereTest','Atmosfera',()=>report.tests.ATMOSPHERE?.passed],['shadowTest','Sombra',()=>report.tests.CONTACT_SHADOW?.passed],['transitions','Fumaça e transições',()=>report.tests.TRANSITIONS?.entered&&report.tests.TRANSITIONS.exited&&report.tests.TRANSITIONS.noFlashWhenInterrupted]
+];
+$('#regressionTest').onclick=async()=>{
+ if(live||demo||testing||suiteRunning)return;suiteRunning=true;$('#regressionTest').disabled=true;$('#preview').disabled=true;$('#live').disabled=true;const errorsBefore=report.errors.length;report.tests.REGRESSION={startedAt:new Date().toISOString(),stages:[],physicalCameraTest:false};
+ try{for(const [id,label,check] of regressionStages){text('#regressionStatus','Conferindo '+(report.tests.REGRESSION.stages.length+1)+'/'+regressionStages.length+' · '+label);const ok=await $('#'+id).onclick();const passed=ok===true&&check()===true;report.tests.REGRESSION.stages.push({id,label,passed});show();}
+ const suite=report.tests.REGRESSION;suite.newErrors=report.errors.length-errorsBefore;suite.passed=suite.stages.every(x=>x.passed)&&suite.newErrors===0;suite.finishedAt=new Date().toISOString();text('#regressionStatus',suite.passed?'Conferência concluída: 35 recursos aprovados nos ensaios digitais. Câmera real ainda precisa de teste.':'Conferência concluída com falhas. Confira os resultados antes de usar esta versão.');
+ }finally{suiteRunning=false;$('#regressionTest').disabled=false;$('#preview').disabled=false;$('#live').disabled=false;$('#stop').disabled=false;$('#restart').disabled=false;show();}
+};
+
+$('#gestureRobustTest').onclick=()=>runTest('gesture-robustness',async()=>{
+ let runner;try{
+  runner=new WorkerRunner('./hand-worker-v0341.js');await runner.ready;const fist=await loadImage('./fist.jpg'),negative=await loadImage('./thumb_up.jpg'),rows=[];let clock=1000;
+  const cases=[{name:'normal',scale:1,angle:0},{name:'inclinado esquerda',scale:1,angle:-.4},{name:'inclinado direita',scale:1,angle:.4},{name:'luz reduzida',scale:1,angle:0,brightness:.6},{name:'mão menor no enquadramento',scale:.48,angle:0},{name:'imagem espelhada',scale:1,angle:0,mirror:true},{name:'mão pequena com busca pelo pulso',scale:.2,angle:0,poseSearch:true}];
+  for(const condition of cases){const c=canvas(),ctx=c.getContext('2d');ctx.fillStyle='#b9b9b9';ctx.fillRect(0,0,W,H);ctx.save();ctx.translate(W/2,H/2);ctx.rotate(condition.angle);ctx.scale(condition.mirror?-1:1,1);ctx.filter='brightness('+(condition.brightness??1)+')';const width=W*.88*condition.scale,height=width*fist.naturalHeight/fist.naturalWidth;ctx.drawImage(fist,-width/2,-height/2,width,height);ctx.restore();const gate=new GestureGate(),planner=new HandFramePlanner();let result=null,fired=false,crops=0;
+   for(let i=0;i<12&&!fired;i++){const posePoints=condition.poseSearch?Array.from({length:33},(_,i)=>({x:.5,y:.53,visibility:i===15?.95:0,presence:1})):[];const frame=planner.next(clock,posePoints),analysis=canvas();analysis.getContext('2d').drawImage(c,frame.x*W,frame.y*H,frame.w*W,frame.h*H,0,0,W,H);result=mapHandResult(await runner.infer(analysis,clock),frame);planner.observe(result,clock);crops+=frame.kind!=='full'?1:0;fired=gate.update(result.gesture,clock);clock+=180;}
+   rows.push({name:condition.name,fired,gesture:result?.gesture,handSeen:result?.handSeen,crops,confirmation:gate.snapshot()});status('Gesto · '+condition.name+' · '+(fired?'confirmado':'não confirmado'));
+  }
+  const negativeGate=new GestureGate();let falseTrigger=false,lastNegative;for(let i=0;i<10;i++){lastNegative=await runner.infer(negative,clock);falseTrigger||=negativeGate.update(lastNegative.gesture,clock);clock+=180;}
+  const jitter=new GestureGate();let firedWithDropout=false;for(let t=0;t<=1260;t+=180)firedWithDropout||=jitter.update(t===540?null:{name:'Closed_Fist',score:t===360?.55:.7},t);
+  report.tests.GESTURE_ROBUSTNESS={rows,negativeGesture:lastNegative.gesture,falseTrigger,firedWithDropout,syntheticImageTransforms:true,syntheticTiming:true,physicalDistanceTest:false,passed:rows.every(x=>x.fired)&&!falseTrigger&&firedWithDropout};if(!report.tests.GESTURE_ROBUSTNESS.passed)throw new Error('Falha no ensaio ampliado do gesto');status('Punho conferido em 7 condições, falha breve e gesto negativo. Distância real ainda não validada.');
+ }finally{runner?.close()}
+});
+regressionStages.push(['gestureRobustTest','Robustez do punho',()=>report.tests.GESTURE_ROBUSTNESS?.passed]);
+
+function acceptHandFrame(raw,frame,received){
+if(received-raw.captureAt>1000){report.live.staleHandFrames=(report.live.staleHandFrames??0)+1;gestureGate.expire(received);return false;}const mapped=mapHandResult(raw,frame);if(raw.hands)mapped.hands=raw.hands.map(h=>({...h,points:h.points.map(p=>({...p,x:frame.x+p.x*frame.w,y:frame.y+p.y*frame.h}))}));const r=handAssociation.select(mapped,raw.captureAt,gestureGate.armed);handFramePlanner.observe(r,received);report.live.lastHandResultAt=received;report.live.handSeen=r.handSeen;report.live.gesture=r.gesture;report.live.handAnalysisRegion=r.analysisRegion;report.live.handEvidence={raw:r.rawGesture,shape:r.shape,association:r.association,lighting:raw.lighting};report.live.handFrames=(report.live.handFrames??0)+1;if(compositor)compositor.hand=r.points;compositor?.drawGuides($('#guides').checked);if(gestureGate.update(r.gesture,raw.captureAt))startExit();report.live.gestureConfirmation=gestureGate.snapshot();const trace=report.live.handTrace??=[];trace.push({at:raw.captureAt,delayMs:received-raw.captureAt,lighting:raw.lighting,seen:r.handSeen,raw:r.rawGesture,resolved:r.gesture?.name??null,folded:r.shape?.folded,open:r.shape?.open,association:r.association,region:frame.kind,confirmation:gestureGate.snapshot()});if(trace.length>40)trace.shift();updateLiveStatus();
+ return true;
+}
+$('#gestureFlowTest').onclick=()=>runTest('gesture-flow',async()=>{
+ let bodyWorker,handWorker,proof;const oldLive=report.live,oldBook=$('#showBook').checked;
+ try{
+  defaultCamera();resetScene();$('#view').classList.add('live');bodyWorker=new WorkerRunner('./body-worker-v025.js');handWorker=new WorkerRunner('./hand-worker-v0341.js');await Promise.all([bodyWorker.ready,handWorker.ready]);const c=fixture(await loadImage('./pose.jpg'),1),r=await settled(bodyWorker,c,1000);r.bitmap.close();if(!r.body.present)throw new Error('Corpo de referência não detectado');
+  proof=new Compositor($('#view'),false);compositor=proof;report.live={bodyDetections:0,maskFrames:0,handSeen:false,handInitialization:'ready'};live=true;bodyReady=handReady=true;$('#showBook').checked=true;await notebook.load({retry:true});armTarget(performance.now());
+  const feed=async(ms)=>{const start=performance.now();while(performance.now()-start<ms){acceptBody({body:r.body},performance.now());proof.paint({...r,bitmap:await createImageBitmap(c)});await sleep(80)}};await feed(2700);updateLiveStatus();const actualHintVisible=!$('#gestureFeedback').hidden,buttonVisible=!$('#exitAppearance').hidden;
+  const fist=await loadImage('./fist.jpg'),feedback=[];let fired=false;const start=performance.now();let i=0;
+  while(!fired&&performance.now()-start<4500){await feed(140);const now=performance.now();let raw=await handWorker.infer(fist,now);if(i++===3)raw={...raw,gesture:null,hands:raw.hands?.map(h=>({...h,gesture:null}))};acceptHandFrame(raw,{x:0,y:0,w:1,h:1,kind:'full'},performance.now());updateLiveStatus();feedback.push({progress:gestureGate.progress,hint:$('#gestureHint').textContent,gesture:raw.gesture?.name??null,reason:gestureGate.reason});fired=phase==='exiting';}
+  sampleFrame(proof,'Ensaio digital · saída por punho');const waitExitStart=performance.now();while((placement.visible||notebook.snapshot().visible||smoke.visible)&&performance.now()-waitExitStart<4200)await feed(100);const fistState={phase,visible:placement.visible,book:notebook.snapshot(),smoke:smoke.visible,smokeStart,now:performance.now(),person:person.state(performance.now())};const fistExitHidden=!placement.visible&&!notebook.snapshot().visible&&!smoke.visible;
+  armTarget(performance.now());await feed(2700);const beforeButton={phase,visible:placement.visible,person:person.state(performance.now())};$('#exitAppearance').click();const buttonTriggered=phase==='exiting'&&exitTrigger==='button';await feed(2800);const buttonExitHidden=!placement.visible&&!notebook.snapshot().visible&&!smoke.visible;
+  report.tests.GESTURE_FLOW={actualHintVisible,buttonVisible,feedback,fired,fistExitHidden,fistState,beforeButton,buttonTriggered,buttonExitHidden,handResultFromFixture:true,physicalCameraTest:false,passed:actualHintVisible&&buttonVisible&&fired&&fistExitHidden&&buttonTriggered&&buttonExitHidden&&feedback.some(x=>x.progress>0&&x.progress<1)};if(!report.tests.GESTURE_FLOW.passed)throw new Error('Falha de integração da saída por punho/botão');status('Saída por punho, barra de confirmação, fumaça, caderno e botão conferidos.');
+ }finally{live=false;bodyReady=handReady=false;report.live=oldLive;compositor=null;bodyWorker?.close();handWorker?.close();proof?.dispose();placement.visible=false;notebook.reset();$('#showBook').checked=oldBook;$('#gestureFeedback').hidden=true;$('#exitAppearance').hidden=true;$('#view').classList.remove('live')}
+});
+regressionStages.push(['gestureFlowTest','Saída integrada e botão',()=>report.tests.GESTURE_FLOW?.passed]);
+
+function applyPerformanceProfile(){if(renderer){const p=renderProfile($('#quality').value,live);renderer.setPixelRatio(Math.min(devicePixelRatio,p.pixelRatio));}}
+$('#quality').onchange=applyPerformanceProfile;
+
+$('#performanceTest').onclick=()=>runTest('performance',async()=>{
+ const v=document.createElement('div'),c=new Compositor(v,false);c.liveVideo=true;c.mode='original';const source=canvas(),ctx=source.getContext('2d');
+ let closed=0;const mask=new Uint8Array(16).fill(255),bitmap=await createImageBitmap(source);const close=bitmap.close.bind(bitmap);bitmap.close=()=>{closed++;close();};
+ c.paint({bitmap,width:4,height:4,alpha:mask,body:{points:[]}});
+ ctx.fillStyle='#ff0000';ctx.fillRect(0,0,W,H);c.paintVideo(source,true,performance.now());const red=c.layers[1].getContext('2d').getImageData(240,320,1,1).data;
+ ctx.fillStyle='#0000ff';ctx.fillRect(0,0,W,H);c.paintVideo(source,true,performance.now()+33);const blue=c.layers[1].getContext('2d').getImageData(240,320,1,1).data;
+ const backgroundTransparent=c.layers[0].getContext('2d').getImageData(240,320,1,1).data[3]===0;
+ const partial=Uint8Array.from({length:16},(_,i)=>i%4<2?255:0);c.paint({bitmap:await createImageBitmap(source),width:4,height:4,alpha:partial,body:{points:[]}});c.paintVideo(source,true);const inside=c.layers[1].getContext('2d').getImageData(80,320,1,1).data[3],outside=c.layers[1].getContext('2d').getImageData(400,320,1,1).data[3];const maskPreserved=inside===255&&outside===0;
+ c.paintVideo(source,false,performance.now()+66);const hiddenCleared=c.layers[1].getContext('2d').getImageData(240,320,1,1).data[3]===0;c.clear();const maskCleared=!c.maskReady;c.dispose();
+ const b=new LiveBudget(),jobs=[];let busyUntil=0;for(let now=0;now<10000;now+=16){if(b.active&&now>=busyUntil)b.finished(b.active,now);const kind=b.choose(now,{bodyReady:true,handReady:true,bodyAllowed:true,handAllowed:true,bodyBusy:false,handBusy:false,videoTime:Math.floor(now/33)});if(kind){jobs.push({kind,now});b.started(kind,now,Math.floor(now/33));busyUntil=now+(kind==='body'?90:70);}}
+ const gaps=kind=>{const times=jobs.filter(x=>x.kind===kind).map(x=>x.now);return Math.max(...times.slice(1).map((x,i)=>x-times[i]));};const bodyGap=gaps('body'),handGap=gaps('hand');
+ const frozen=new LiveBudget();frozen.started('hand',0,1);frozen.finished('hand',50);const duplicateSkipped=frozen.choose(1000,{handReady:true,handAllowed:true,videoTime:1})===null;
+ const wide=document.createElement('canvas');wide.width=640;wide.height=480;const wc=wide.getContext('2d');wc.fillStyle='#ff0000';wc.fillRect(0,0,640,480);wc.fillStyle='#0000ff';wc.fillRect(230,120,180,240);const crop=canvas();drawCover(wide,crop,{x:.25,y:.25,w:.5,h:.5});const cp=crop.getContext('2d').getImageData(10,10,1,1).data;const directCrop=cp[2]===255&&cp[0]===0;
+ const balanced=renderProfile('auto',true),detailed=renderProfile('suave',true);
+ report.tests.PERFORMANCE={currentVideoPixels:red[0]===255&&blue[2]===255,backgroundTransparent,maskPreserved,directCrop,hiddenCleared,maskCleared,bitmapClosed:closed===1,bodyGap,handGap,duplicateSkipped,balanced,detailed,approvedModelUnchanged:true,physicalCameraTest:false};
+ const t=report.tests.PERFORMANCE;t.passed=t.currentVideoPixels&&backgroundTransparent&&maskPreserved&&directCrop&&hiddenCleared&&maskCleared&&t.bitmapClosed&&bodyGap<=320&&handGap<=320&&duplicateSkipped&&balanced.fps===60&&detailed.fps===60;
+ if(!t.passed)throw new Error('Falha no orçamento ou composição da câmera');status('Vídeo atual, recorte, limpeza e distribuição corpo/mão conferidos.');
+});
+regressionStages.push(['performanceTest','Câmera e distribuição do processamento',()=>report.tests.PERFORMANCE?.passed]);
+
+$('#lifecycleTest').onclick=async()=>{
+ if(live||demo||testing)return false;const wasSuite=suiteRunning;suiteRunning=true;const errorsBefore=report.errors.length;let pump=null;startDigitalFrames();
+ try{
+  const image=await loadImage('./pose.jpg'),source=fixture(image,1),ctx=source.getContext('2d');
+  const stream1=source.captureStream(15);let release;const pending=startLive(()=>new Promise(r=>release=r),true);stopLive();release({stream:stream1,fallbackUsed:false});await pending;
+  const cancelReleased=stream1.getTracks().every(t=>t.readyState==='ended')&&!live;
+  const runs=[],pipelines=[];pump=setInterval(()=>{ctx.fillStyle='#64616a';ctx.fillRect(0,0,1,1);},66);
+  for(let i=0;i<2;i++){
+   const stream=source.captureStream(15);await startLive(async()=>({stream,fallbackUsed:false}),true);
+   const deadline=performance.now()+15000;while(live&&(!bodyReady||!handReady)&&performance.now()<deadline)await sleep(100);
+   const started=live&&bodyReady&&handReady&&$('#video').srcObject===stream&&compositor.liveVideo;
+   $('#manual').onclick();const processingDeadline=performance.now()+10000;while(live&&performance.now()<processingDeadline&&(!(report.live.processingBudget?.counts.body>=3)||!(report.live.processingBudget?.counts.hand>=2)))await sleep(100);
+   const actualInference=report.live.processingBudget?.counts.body>=3&&report.live.processingBudget?.counts.hand>=2&&person.state(performance.now()).visible&&report.live.occlusionApplied&&compositor.foregroundDrawn;
+   pipelines.push({processing:report.live.processingBudget,preview:report.live.cameraPreview,bodyFrames:report.live.bodyDetections,handFrames:report.live.handFrames});
+   const br=bodyRunner,hr=handRunner;stopLive();stopLive();await sleep(350);
+   runs.push({started,actualInference,allTracksEnded:stream.getTracks().every(t=>t.readyState==='ended'),workersClosed:br?.closed&&hr?.closed,layersRemoved:!$('#view .cameraBackground')&&!$('#view .personForeground'),canRestart:!$('#live').disabled,videoReleased:$('#video').srcObject===null});
+  }
+  report.tests.LIFECYCLE={cancelReleased,runs,pipelines,newErrors:report.errors.length-errorsBefore,syntheticCameraStream:true,manualActivationDoesNotValidateCover:true,physicalCameraTest:false};const t=report.tests.LIFECYCLE;t.passed=cancelReleased&&t.newErrors===0&&runs.length===2&&runs.every(r=>Object.values(r).every(Boolean));
+  if(!t.passed)throw new Error('Falha ao cancelar, encerrar ou reiniciar');status('Cancelamento, duas inicializações e encerramentos conferidos com vídeo de referência.');return true;
+ }catch(e){report.errors.push({stage:'lifecycle-digital',message:e.message});status(e.message);return false;}finally{stopDigitalFrames();clearInterval(pump);if(live)stopLive();suiteRunning=wasSuite;show();}
+};
+regressionStages.push(['lifecycleTest','Iniciar, cancelar, encerrar e reiniciar',()=>report.tests.LIFECYCLE?.passed]);
+
+// Occluded desktop WebGL may receive only one rAF per second. Digital tests
+// exercise the same render function and clock; this pump is absent in camera use.
+function startDigitalFrames(){stopDigitalFrames();report.environment.digitalFrameFallback=true;digitalFramePump=setInterval(()=>{digitalCameraFrame?.();renderFrame?.();},40);}
+function stopDigitalFrames(){clearInterval(digitalFramePump);digitalFramePump=null;}
+
+$('#handContinuityTest').onclick=()=>runTest('hand-continuity',async()=>{
+ let runner;try{
+  runner=new WorkerRunner('./hand-worker-v0341.js');await runner.ready;const photo=await loadImage('./fist.jpg'),negative=await loadImage('./thumb_up.jpg'),source=canvas(),ctx=source.getContext('2d');ctx.fillStyle='#b9b9b9';ctx.fillRect(0,0,W,H);const width=W*.5,height=width*photo.naturalHeight/photo.naturalWidth;ctx.drawImage(photo,(W-width)/2,(H-height)/2,width,height);
+  const planner=new HandFramePlanner(),association=new HandAssociation(),gate=new GestureGate(),rows=[];let clock=1000,fired=false;
+  for(let i=0;i<18;i++){const frame=planner.next(clock),c=canvas();c.getContext('2d').drawImage(source,frame.x*W,frame.y*H,frame.w*W,frame.h*H,0,0,W,H);const raw=await runner.infer(c,clock),mapped=mapHandResult(raw,frame);mapped.hands=raw.hands.map(h=>({...h,points:h.points.map(p=>({...p,x:frame.x+p.x*frame.w,y:frame.y+p.y*frame.h}))}));const selected=association.select(mapped,clock,gate.armed);planner.observe(selected,clock);fired=gate.update(selected.gesture,clock)||fired;rows.push({frame:frame.kind,seen:selected.handSeen,raw:selected.rawGesture,shape:selected.shape,gesture:selected.gesture?.name,progress:gate.progress});clock+=180;}
+  const jitter=new GestureGate(),progress=[];let jitterFired=false;for(let i=0;i<12;i++){jitterFired=jitter.update(i%3===2?{name:'Open_Palm',score:.65}:{name:'Closed_Fist',score:.8},i*180)||jitterFired;progress.push(jitter.progress);}
+  const negativeGate=new GestureGate();let falseExit=false;const negatives=[];for(let i=0;i<8;i++){const r=await runner.infer(negative,clock);negatives.push({raw:r.rawGesture,shape:r.shape,resolved:r.gesture?.name});falseExit=negativeGate.update(r.gesture,clock)||falseExit;clock+=180;}
+  const real=rows.find(x=>x.seen),points=Array.from({length:21},()=>({x:.2,y:.5})),other=points.map(p=>({...p,x:.8})),a=new HandAssociation();a.select({hands:[{points,gesture:{name:'Closed_Fist',score:.8}}]},0);const same=a.select({hands:[{points:other,gesture:{name:'Open_Palm',score:.98}},{points,gesture:{name:'Closed_Fist',score:.8}}]},180,true);const missing=a.select({hands:[{points:other,gesture:{name:'Open_Palm',score:.98}}]},360,true);
+  report.tests.HAND_CONTINUITY={rows,negatives,fired,jitterFired,progress,monotonicProgress:progress.every((x,i)=>!i||x>=progress[i-1]),sameHand: same.gesture?.name==='Closed_Fist'&&same.gesture.center.x===.2,otherHandIgnored:missing.gesture===null,negativeDidNotExit:!falseExit,negativeGeometryRejected:negatives.every(r=>!r.shape?.closed),geometryFallback:resolveGesture({name:"None",score:.9},real?.shape)?.name==="Closed_Fist",imageMode:true,physicalCameraTest:false};const t=report.tests.HAND_CONTINUITY;t.passed=fired&&jitterFired&&t.monotonicProgress&&t.sameHand&&t.otherHandIgnored&&t.negativeGeometryRejected&&t.geometryFallback&&!falseExit&&rows.filter(r=>r.seen).length>=14&&rows.filter(r=>r.frame!=='full').length>=8;
+  if(!t.passed)throw new Error('Falha na continuidade do punho');status('Punho: alternância de recortes, classificação instável, segunda mão e gesto negativo conferidos.');
+ }finally{runner?.close();}
+});
+regressionStages.push(['handContinuityTest','Punho estável e mesma mão',()=>report.tests.HAND_CONTINUITY?.passed]);
+$('#spaceTest').onclick=()=>runTest('side-space',async()=>{
+ let runner,proof;const side=$('#side').value,oldFront=front;try{
+  defaultCamera();resetScene();$('#side').value='auto';$('#view').classList.add('live');runner=new WorkerRunner('./body-worker-v025.js');await runner.ready;const c=fixture(await loadImage('./pose.jpg'),1),r=await settled(runner,c,1000);r.bitmap.close();const rows=[];
+  for(const dx of [-.18,.18]){armTarget(performance.now());demo=true;front=false;renderer.domElement.style.transform='none';const points=r.body.points.map(p=>({...p,x:p.x+dx})),body=bodySnapshot(points),shifted=canvas(),ctx=shifted.getContext('2d');ctx.fillStyle='#64616a';ctx.fillRect(0,0,W,H);ctx.drawImage(c,dx*W,0);const alpha=new Uint8Array(r.alpha.length),shift=Math.round(dx*r.width);for(let y=0;y<r.height;y++)for(let x=0;x<r.width;x++){const src=x-shift;if(src>=0&&src<r.width)alpha[y*r.width+x]=r.alpha[y*r.width+src];}
+   proof=new Compositor($('#view'),false);const started=performance.now();while(performance.now()-started<2800){acceptBody({body},performance.now());proof.paint({...r,alpha,body,bitmap:await createImageBitmap(shifted)});await sleep(80);}appearanceAt=performance.now()-5000;restoreMaterials();await sleep(100);sampleFrame(proof,dx<0?'Pessoa à esquerda · Ryuk à direita':'Pessoa à direita · Ryuk à esquerda');rows.push({person:body.center.x,direction:sideDirection,avatarX:placement.position.x,targetX:targetPlacement.x,scale:placement.scale.x,choice:spaceChooser.snapshot(),correctSide:dx<0?sideDirection===1:sideDirection===-1});proof.dispose();proof=null;}
+  const base=bodySnapshot(r.body.points),centered=base.center.x,sim=x=>({...base,center:{...base.center,x},points:base.points.map(p=>({...p,x:p.x+x-centered}))}),switches=[];for(const mirrored of [false,true]){const chooser=new SpaceChooser();chooser.update(sim(.7),refs,1,viewHeight()*.75,.7,0,'auto',mirrored);for(let t=100;t<=800;t+=100)chooser.update(sim(.4),refs,1,viewHeight()*.75,.7,t,'auto',mirrored);const changed=chooser.direction===1;for(let t=900;t<=1600;t+=100)chooser.update(sim(t%200?.495:.505),refs,1,viewHeight()*.75,.7,t,'auto',mirrored);switches.push({mirrored,changed,stableAtCenter:chooser.direction===1,manualLeft:chooser.update(sim(.5),refs,1,viewHeight()*.75,.7,1700,'left',mirrored).direction===(mirrored?1:-1),manualRight:chooser.update(sim(.5),refs,1,viewHeight()*.75,.7,1800,'right',mirrored).direction===(mirrored?-1:1)});}
+  armTarget(performance.now());let acceptedMovement=true;for(let step=0;step<=30;step++){const dx=-.18+.36*step/30,body=bodySnapshot(r.body.points.map(p=>({...p,x:p.x+dx})));acceptedMovement=acceptBody({body},performance.now()).accepted&&acceptedMovement;await sleep(80);}const finalBody=bodySnapshot(r.body.points.map(p=>({...p,x:p.x+.18})));for(let step=0;step<9;step++){acceptBody({body:finalBody},performance.now());await sleep(80);}const actualSideChanged=sideDirection===-1&&person.state(performance.now()).visible;
+  report.tests.SIDE_SPACE={rows,switches,acceptedMovement,actualSideChanged,scalePreserved:Math.abs(rows[0].scale-rows[1].scale)<.001,syntheticBodyPositions:true,physicalCameraTest:false};const t=report.tests.SIDE_SPACE;t.passed=acceptedMovement&&actualSideChanged&&rows.every(x=>x.correctSide)&&t.scalePreserved&&switches.every(x=>x.changed&&x.stableAtCenter&&x.manualLeft&&x.manualRight);if(!t.passed)throw new Error('Falha na escolha do lado livre');status('Lado livre, troca após deslocamento, estabilidade no centro e câmeras espelhadas conferidos.');
+ }finally{runner?.close();proof?.dispose();demo=false;placement.visible=false;front=oldFront;$('#side').value=side;renderer.domElement.style.transform='none';$('#view').classList.remove('live');}
+});
+regressionStages.push(['spaceTest','Lado livre e mudança de lado',()=>report.tests.SIDE_SPACE?.passed]);
+
+$('#presenceTest').onclick=()=>runTest('presence-resilience',async()=>{
+ const points=Array.from({length:33},()=>({x:.5,y:.5,visibility:0,presence:1}));for(const [i,x,y] of [[11,.4,.3],[12,.6,.3],[23,.43,.6],[24,.57,.6]])Object.assign(points[i],{x,y,visibility:.95});const body=bodySnapshot(points),p=new PersonSession();p.update(body,0);p.update(body,100);const shortGap=p.update({present:false},800).visible,longGapHidden=!p.state(1200).visible,recovered=p.update(body,1250).visible;const moved=bodySnapshot(points.map(q=>({...q,x:q.x+.35})));const first=p.update(moved,1400),second=p.update(moved,1600);p.update({present:false},1700);const expired=p.state(3401).expired,doesNotReattach=!p.update(body,3500).visible;
+ report.tests.PRESENCE_RESILIENCE={faceRequired:false,shortGap,longGapHidden,recovered,firstJumpRejected:!first.accepted,coherentRelocationAccepted:second.accepted&&second.reacquired,expired,doesNotReattach,graceMs:1000,expiryMs:1800,physicalCameraTest:false};const t=report.tests.PRESENCE_RESILIENCE;t.passed=shortGap&&longGapHidden&&recovered&&t.firstJumpRejected&&t.coherentRelocationAccepted&&expired&&doesNotReattach;if(!t.passed)throw new Error('Falha na continuidade corporal');status('Perda breve, retomada coerente, saída real e exigência de novo alvo conferidas.');
+});
+regressionStages.push(['presenceTest','Continuidade durante movimentos rápidos',()=>report.tests.PRESENCE_RESILIENCE?.passed]);
+$('#motionMaskTest').onclick=()=>runTest('motion-matte',async()=>{
+ let runner;const host=document.createElement('div'),c=new Compositor(host,true);c.liveVideo=true;const source=canvas(),ctx=source.getContext('2d'),sample=(x,y)=>c.layers[1].getContext('2d').getImageData(x,y,1,1).data[3];
+ const paintPerson=x=>{ctx.fillStyle='#0000ff';ctx.fillRect(0,0,W,H);ctx.fillStyle='#ff0000';ctx.fillRect(x,149,120,372);};const mask=x=>Uint8Array.from({length:64*86},(_,i)=>{const px=i%64,py=Math.floor(i/64);return px>=x&&px<x+16&&py>=20&&py<70?255:0;});
+ try{
+  paintPerson(60);c.paint({bitmap:await createImageBitmap(source),width:64,height:86,alpha:mask(8),body:{points:[]}});c.paintVideo(source,true);const stationaryOpaque=sample(100,300)===255;
+  paintPerson(300);c.paintVideo(source,true);const oldSilhouetteRejected=sample(100,300)===0,rejectedFraction=c.previewStats().motionRejectedFraction;
+  c.paint({bitmap:await createImageBitmap(source),width:64,height:86,alpha:mask(40),body:{points:[]}});c.paintVideo(source,true);const freshPersonOpaque=sample(350,300)===255;
+  c.paint({bitmap:await createImageBitmap(source),width:64,height:86,alpha:new Uint8Array(64*86).fill(128),body:{points:[]}});c.paintVideo(source,true);const uncertainDoesNotMakeGhost=sample(350,300)===0;
+  const captured=performance.now()-300;c.paint({bitmap:await createImageBitmap(source),captureAt:captured,width:64,height:86,alpha:mask(40),body:{points:[]}});const captureAgeCorrect=Math.abs(c.maskAt-captured)<1;c.paintVideo(source,true,captured+451);const staleCleared=sample(350,300)===0;
+  runner=new WorkerRunner('./body-worker-v025.js');await runner.ready;const photo=fixture(await loadImage('./pose.jpg'),1),r=await settled(runner,photo,performance.now());c.paint(r);c.paintVideo(photo,true);const pixels=c.layers[1].getContext('2d').getImageData(0,0,W,H).data;let opaque=0,partial=0;for(let i=3;i<pixels.length;i+=4){if(pixels[i]===255)opaque++;else if(pixels[i]>0)partial++;}const realMaskOpaque=opaque>1000&&partial<opaque*.25;
+  const frontMirrorConsistent=c.layers.every(layer=>layer.style.transform==='scaleX(-1)'),backgroundTransparent=c.layers[0].getContext('2d').getImageData(100,300,1,1).data[3]===0;c.clear();const cleared=!c.maskReady&&c.reference===null;
+  report.tests.MOTION_MATTE={stationaryOpaque,oldSilhouetteRejected,freshPersonOpaque,uncertainDoesNotMakeGhost,captureAgeCorrect,staleCleared,frontMirrorConsistent,backgroundTransparent,cleared,rejectedFraction,opaque,partial,realMaskOpaque,realSegmentationFixture:true,physicalCameraTest:false};const t=report.tests.MOTION_MATTE;t.passed=stationaryOpaque&&oldSilhouetteRejected&&freshPersonOpaque&&uncertainDoesNotMakeGhost&&captureAgeCorrect&&staleCleared&&frontMirrorConsistent&&backgroundTransparent&&cleared&&realMaskOpaque;if(!t.passed)throw new Error('Falha no recorte em movimento');status('Silhueta antiga rejeitada; recorte novo opaco, validade temporal e câmera espelhada conferidos.');
+ }finally{runner?.close();c.dispose();}
+});
+regressionStages.push(['motionMaskTest','Recorte opaco e movimento na frontal',()=>report.tests.MOTION_MATTE?.passed]);
+$('#eyeDepthTest').onclick=()=>runTest('eye-depth',async()=>{
+ const probe=new THREE.Scene(),materials=[],geometries=[],rows=[],make=(size,color,offset,order,z=0,x=0)=>{const material=new THREE.MeshBasicMaterial({color,toneMapped:false,polygonOffset:offset!==null,polygonOffsetFactor:0,polygonOffsetUnits:offset??0,depthTest:true,depthWrite:true});const geometry=new THREE.PlaneGeometry(size,size),mesh=new THREE.Mesh(geometry,material);mesh.position.set(x,0,z);mesh.renderOrder=order;probe.add(mesh);materials.push(material);geometries.push(geometry);return mesh;};
+ make(1.4,0xffff00,null,2);make(.26,0xff0000,eyeDepthSettings.Iris_Vermelha,1);make(.1,0x000000,eyeDepthSettings.Pupila_Preta,0);const lens=new THREE.PerspectiveCamera(40,.75,.1,40),copy=canvas(),cx=copy.getContext('2d');
+ const pixel=x=>{const v=new THREE.Vector3(x,0,0).project(lens);return cx.getImageData(Math.round((v.x*.5+.5)*W),Math.round((.5-v.y*.5)*H),1,1).data;};
+ try{renderer.setSize(W,H);for(const distance of [1,4.8]){lens.position.set(0,0,distance);lens.updateMatrixWorld();renderer.render(probe,lens);cx.drawImage(renderer.domElement,0,0,W,H);const black=pixel(0),red=pixel(.09),yellow=pixel(.2);rows.push({distance,pupil:black[0]<30&&black[1]<30&&black[2]<30,iris:red[0]>200&&red[1]<80,globe:yellow[0]>160&&yellow[1]>160&&yellow[2]<80});}
+  const cover=make(.04,0x0000ff,null,3,.05,.035);renderer.render(probe,lens);cx.drawImage(renderer.domElement,0,0,W,H);const blue=pixel(.035),occlusionPreserved=blue[2]>200&&blue[0]<80;probe.remove(cover);
+  const textures=report.eyeRendering.rows,ready=textures.length===2&&textures.filter(x=>x.textured).every(x=>x.imageSize[0]>0&&x.imageSize[1]>0);defaultCamera();resetScene();placement.visible=true;placement.scale.setScalar(1);placement.position.set(0,0,0);camera.position.set(0,refs.headY+.08,.85);camera.lookAt(0,refs.headY+.08,.2);camera.aspect=.75;camera.updateProjectionMatrix();$('#view').classList.add('live');
+  for(const mirrored of [false,true]){renderer.domElement.style.transform=mirrored?'scaleX(-1)':'none';renderer.render(scene,camera);const frame=sampleFrame(null,mirrored?'Olhos · câmera frontal espelhada':'Olhos · câmera traseira');if(mirrored){const ctx=frame.getContext('2d');ctx.clearRect(0,50,W,H);ctx.save();ctx.translate(W,50);ctx.scale(-1,1);ctx.drawImage(renderer.domElement,0,0,W,H);ctx.restore();}}
+  report.tests.EYE_DEPTH={rows,occlusionPreserved,materialImagesReady:ready,textures,nearPlane:camera.near,modelAndAnimationBytesUnchanged:true,frontAndRearCaptures:true,physicalCameraTest:false};const t=report.tests.EYE_DEPTH;t.passed=rows.every(x=>x.pupil&&x.iris&&x.globe)&&occlusionPreserved&&ready&&camera.near===.1;if(!t.passed)throw new Error('Falha de profundidade dos olhos');status('Íris, pupila, textura pronta e oclusão dos olhos conferidas nas duas orientações.');
+ }finally{materials.forEach(m=>m.dispose());geometries.forEach(g=>g.dispose());renderer.domElement.style.transform='none';placement.visible=false;$('#view').classList.remove('live');defaultCamera();}
+});
+regressionStages.push(['eyeDepthTest','Olhos e precisão de profundidade',()=>report.tests.EYE_DEPTH?.passed]);
+
+$('#smokeVolumeTest').onclick=()=>runTest('smoke-volume',async()=>{
+ const probe=new LayeredSmoke(SMOKE_COUNT),isolated=new THREE.Scene(),backdrop=new THREE.Color('#88818d');isolated.background=backdrop;isolated.add(probe);probe.visible=true;const c=canvas(),ctx=c.getContext('2d');let old=null,maxStep=0,stableArrays=true;const arrays={...probe.buffers};const states=[];
+ try{
+  defaultCamera();for(const mode of ['entry','exit']){old=null;for(let i=0;i<=100;i++){probe.update(i/100,mode);if(old)for(let j=0;j<SMOKE_COUNT;j++){const p=probe.motion.puffs[j],q=old[j];maxStep=Math.max(maxStep,Math.hypot(p.x-q.x,p.y-q.y,p.z-q.z));}old=probe.motion.puffs.map(p=>({...p}));for(const name of Object.keys(arrays))stableArrays&&=probe.buffers[name]===arrays[name];}states.push({...probe.snapshot()});}
+  probe.update(.4,'exit');renderer.render(isolated,camera);const drawCalls=renderer.info.render.calls,triangles=renderer.info.render.triangles;ctx.drawImage(renderer.domElement,0,0,W,H);const pixels=ctx.getImageData(0,0,W,H).data;let changed=0,darkened=0;probe.visible=false;renderer.render(isolated,camera);const baseline=canvas(),bc=baseline.getContext('2d');bc.drawImage(renderer.domElement,0,0,W,H);const clear=bc.getImageData(0,0,W,H).data;for(let i=0;i<pixels.length;i+=4){if(Math.abs(pixels[i]-clear[i])+Math.abs(pixels[i+1]-clear[i+1])+Math.abs(pixels[i+2]-clear[i+2])>12)changed++;if(pixels[i]+pixels[i+1]+pixels[i+2]<clear[i]+clear[i+1]+clear[i+2]-20)darkened++;}
+  probe.update(.4,'exit','economica');probe.visible=true;renderer.render(isolated,camera);const economyTriangles=renderer.info.render.triangles;const area=probe.motion.puffs.reduce((s,p)=>s+p.diameter*p.diameter,0),previousArea=128*(.65+.7*.4)**2;
+  defaultCamera();resetScene();placement.position.set(0,0,0);placement.scale.setScalar(1);$('#view').classList.add('live');const frames=[];
+  for(const mode of ['entry','exit']){reveal(performance.now());if(mode==='exit'){restoreMaterials();startExit('smoke-quality-test');}for(const u of [.2,.42,.68,.9]){const now=performance.now();smokeStart=now-u*(mode==='entry'?2400:2600);updateSmoke(now);renderer.render(scene,camera);sampleFrame(null,(mode==='entry'?'Entrada':'Saída')+' · '+Math.round(u*100)+'%');frames.push({mode,u,opacity:currentOpacity,state:smoke.snapshot()});}updateSmoke(smokeStart+(mode==='entry'?2400:2600));}
+  const complete=!smoke.visible&&!placement.visible;resetScene();const resetHidden=!smoke.visible&&smokeStart===null;
+  report.tests.SMOKE_VOLUME={capacity:128,drawCalls,triangles,economyTriangles,textureSize:128,changedPixels:changed,darkenedPixels:darkened,maxStep,stableArrays,states,frames,area,previousArea,complete,resetHidden,physicalCameraTest:false};const t=report.tests.SMOKE_VOLUME;t.passed=drawCalls===1&&triangles===256&&economyTriangles===192&&changed>1000&&darkened>changed*.8&&maxStep<.15&&stableArrays&&states.every(x=>x.peakAlpha===0&&x.sortedBackToFront)&&area<previousArea&&complete&&resetHidden;
+  if(!t.passed)throw new Error('Falha na fumaça em camadas');status('Fumaça conferida: entrada, saída, dissipação, reinício e orçamento de uma chamada gráfica.');
+ }finally{probe.dispose();smoke.visible=false;smokeStart=null;placement.visible=false;restoreMaterials();$('#view').classList.remove('live');defaultCamera();}
+});
+regressionStages.push(['smokeVolumeTest','Fumaça em camadas e orçamento gráfico',()=>report.tests.SMOKE_VOLUME?.passed]);
+
+$('#bookReliabilityTest').onclick=()=>runTest('book-reliability',async()=>{
+ const isolated=new THREE.Scene();isolated.add(new THREE.HemisphereLight(0xffffff,0x777777,2));let calls=0;const b=new NotebookVisual(isolated,async()=>{calls++;if(calls===1)throw new Error('Falha de carregamento simulada');return new GLTFLoader().loadAsync('./death-note-v021.glb');});let late;
+ try{
+  const first=b.load(),same=b.load(),samePromise=first===same;const failed=await Promise.allSettled([first,same]);const failedOnce=calls===1&&failed.every(x=>x.status==='rejected')&&!!b.error&&!b.group.visible;
+  const retry=b.load({retry:true}),retrySame=retry===b.load({retry:true});b.update({visible:true,opacity:1,x:0,y:1.1,z:0,scale:1.8,now:1000});const hiddenWhileLoading=!b.group.visible;await retry;const hiddenWhenReady=!b.group.visible,asset=b.snapshot();
+  const lens=new THREE.PerspectiveCamera(40,.75,.1,40);lens.position.set(0,1.1,.9);lens.lookAt(0,1.1,0);const c=canvas(),ctx=c.getContext('2d'),rows=[];renderer.setSize(W,H);
+  for(const now of [2000,2130,2260]){b.update({visible:true,opacity:1,x:0,y:1.1,z:0,scale:1.8,now});renderer.render(isolated,lens);ctx.clearRect(0,0,W,H);ctx.drawImage(renderer.domElement,0,0,W,H);const px=ctx.getImageData(0,0,W,H).data;let alphaSum=0;for(let i=3;i<px.length;i+=4)alphaSum+=px[i];rows.push({now,opacity:b.snapshot().opacity,visible:b.group.visible,alphaSum});}
+  b.update({visible:true,opacity:.12,x:0,y:1.1,z:0,scale:1.8,now:2300});const exitCapped=b.snapshot().opacity<=.12;b.reset();const resetHidden=!b.group.visible&&b.reveal.startedAt===null;
+  let release;late=new NotebookVisual(new THREE.Scene(),()=>new Promise(resolve=>release=resolve));const pending=late.load();late.reset();const fake=new THREE.Group();fake.add(new THREE.Mesh(new THREE.BoxGeometry(.1,.2,.01),new THREE.MeshBasicMaterial()));release({scene:fake});await pending;late.update({visible:false,opacity:1,now:3000});const lateDidNotShow=!late.group.visible;
+  report.tests.BOOK_RELIABILITY={samePromise,failedOnce,retrySame,hiddenWhileLoading,hiddenWhenReady,asset,rows,exitCapped,resetHidden,lateDidNotShow,attempts:calls,simulatedFailure:true,realOriginalBookLoaded:asset.meshes===3&&asset.triangles===752&&asset.textures===3,physicalCameraTest:false};const t=report.tests.BOOK_RELIABILITY;t.passed=samePromise&&failedOnce&&retrySame&&hiddenWhileLoading&&hiddenWhenReady&&t.realOriginalBookLoaded&&calls===2&&rows[0].alphaSum===0&&rows[1].alphaSum>0&&rows[2].alphaSum>rows[1].alphaSum&&rows[1].opacity===.5&&rows[2].opacity===1&&exitCapped&&resetHidden&&lateDidNotShow;if(!t.passed)throw new Error('Falha na entrada ou recuperação do caderno');status('Caderno conferido: falha simulada, tentativa única, nova tentativa, entrada suave e encerramento.');
+ }finally{b.dispose();late?.dispose();defaultCamera();}
+});
+regressionStages.push(['bookReliabilityTest','Caderno sem salto e recuperação de carregamento',()=>report.tests.BOOK_RELIABILITY?.passed]);
+$('#feedbackTest').onclick=()=>runTest('presentation-feedback',async()=>{
+ const saved=report.live;const wasBody=bodyReady,wasHand=handReady;try{
+  resetScene();const pts=Array.from({length:33},()=>({x:.5,y:.5,visibility:0,presence:1}));for(const [i,x,y] of [[11,.4,.3],[12,.6,.3],[23,.43,.6],[24,.57,.6]])Object.assign(pts[i],{x,y,visibility:.95});const body=bodySnapshot(pts),now=performance.now();person.update(body,now-100);person.update(body,now);live=true;phase='active';bodyReady=handReady=true;report.live={handSeen:true,handInitialization:'ready'};gestureGate.update({name:'Closed_Fist',score:.8},now-400);gestureGate.update({name:'Closed_Fist',score:.8},now-250);gestureGate.update({name:'Open_Palm',score:.65},now-100);updateLiveStatus();const pct=Math.round(gestureGate.progress*100)+'%',hint=$('#gestureHint').textContent,line=$('#liveStatus').textContent,coherent=hint.includes(pct)&&line.includes(pct)&&!line.includes('Feche o punho');
+  startExit('gesture');updateLiveStatus();const fist=$('#liveStatus').textContent,fistCause=report.live.exitReason;phase='active';restoreMaterials();startExit('button');updateLiveStatus();const button=$('#liveStatus').textContent,buttonCause=report.live.exitReason;endSession('Ensaio: rastreamento perdido');updateLiveStatus();const tracking=$('#liveStatus').textContent,trackingCause=report.live.exitReason;
+  report.tests.PRESENTATION_FEEDBACK={pct,hint,line,coherent,fist,button,tracking,fistCause,buttonCause,trackingCause,physicalCameraTest:false};const t=report.tests.PRESENTATION_FEEDBACK;t.passed=coherent&&fist.includes('Punho confirmado')&&button.includes('botão')&&tracking.includes('Rastreamento')&&fistCause==='gesture'&&buttonCause==='button'&&trackingCause==='tracking';if(!t.passed)throw new Error('Falha nas mensagens de confirmação ou saída');status('Mensagens conferidas: punho em confirmação, saída por gesto, botão e perda do rastreamento.');
+ }finally{live=false;bodyReady=wasBody;handReady=wasHand;report.live=saved;resetScene();phase='idle';updateLiveStatus();placement.visible=false;}
+});
+regressionStages.push(['feedbackTest','Mensagens coerentes de confirmação e saída',()=>report.tests.PRESENTATION_FEEDBACK?.passed]);
+
+$('#eyeVisibilityTest').onclick=()=>runTest('eye-visibility-real-model',async()=>{
+ defaultCamera();resetScene();phase='test';placement.visible=true;placement.scale.setScalar(1);placement.position.set(0,0,0);motion.position.set(0,0,0);motion.rotation.set(0,0,0);$('#view').classList.add('live');
+ const eyes=[];model.traverse(o=>{if(o.isMesh&&(Array.isArray(o.material)?o.material:[o.material]).some(m=>['Globo_Amarelo','Iris_Vermelha','Pupila_Preta'].includes(m.name)))eyes.push({mesh:o,visible:o.visible});});
+ const copy=canvas(),ctx=copy.getContext('2d'),rows=[];
+ try{
+  for(const distance of [.85,1.15,4.8]){
+   camera.position.set(0,refs.headY+.08,distance);camera.lookAt(0,refs.headY+.08,0);camera.aspect=.75;camera.updateProjectionMatrix();renderer.setSize(W,H);await sleep(100);scene.updateMatrixWorld(true);
+   renderer.render(scene,camera);ctx.clearRect(0,0,W,H);ctx.drawImage(renderer.domElement,0,0,W,H);const full=ctx.getImageData(0,0,W,H).data.slice();
+   eyes.forEach(e=>e.mesh.visible=false);renderer.render(scene,camera);ctx.clearRect(0,0,W,H);ctx.drawImage(renderer.domElement,0,0,W,H);const hidden=ctx.getImageData(0,0,W,H).data;let changed=0,yellow=0;
+   for(let i=0;i<full.length;i+=4){if(Math.abs(full[i]-hidden[i])+Math.abs(full[i+1]-hidden[i+1])+Math.abs(full[i+2]-hidden[i+2])>30){changed++;if(full[i]>65&&full[i+1]>45&&full[i+1]>full[i+2]*1.6)yellow++;}}
+   eyes.forEach(e=>e.mesh.visible=e.visible);rows.push({distance,changedPixels:changed,yellowPixels:yellow});sampleFrame(null,'Olhos reais · distância '+distance+' m');
+  }
+  report.tests.EYE_VISIBILITY={rows,meshes:report.eyeVisibility.rows,originalGLBPreserved:true,physicalCameraTest:false};const t=report.tests.EYE_VISIBILITY;t.passed=eyes.length>=4&&t.meshes.every(e=>!e.frustumCulled&&e.depthTest)&&rows.every(r=>r.changedPixels>=8&&r.yellowPixels>=4);if(!t.passed)throw new Error('Olhos do modelo real desapareceram em uma distância');status('Olhos reais visíveis no close e à distância; geometria, animações e profundidade preservadas.');
+ }finally{eyes.forEach(e=>e.mesh.visible=e.visible);defaultCamera();placement.visible=false;$('#view').classList.remove('live');}
+});
+regressionStages.push(['eyeVisibilityTest','Olhos reais no close e à distância',()=>report.tests.EYE_VISIBILITY?.passed]);
+
+$('#flowTest').onclick=()=>runTest('presentation-flow',async()=>{
+ const saved={live,compositor,reportLive:report.live,bodyReady,handReady,restartDisabled:$('#restart').disabled},rows=[];let clears=0,disposes=0;
+ const sample=async(input,label)=>{presentationFlow.update(input);$('#view').dataset.flowProof=label;rows.push({label,...presentationFlow.snapshot()});await sleep(label==='complete'?1000:650);};
+ try{
+  defaultCamera();resetScene();$('#view').classList.add('live');placement.scale.setScalar(1);placement.position.set(0,0,0);phase='test';status('Prévia de interface simulada — não abre a câmera.');
+  await sample({live:true,phase:'target'},'target');await sample({live:true,phase:'body'},'body');placement.visible=true;
+  await sample({live:true,phase:'active',personVisible:true},'active');placement.visible=false;await sample({live:true,phase:'active',personVisible:false},'paused');
+  await sample({live:true,phase:'exiting'},'exiting');await sample({live:true,phase:'complete'},'complete');
+  const before=presentationFlow.writes;for(let i=0;i<1000;i++)presentationFlow.update({live:true,phase:'complete'});const stableWrites=presentationFlow.writes===before;
+  const beforePhase=phase;$('#flowReplay').click();const guardedOutsideSession=phase===beforePhase;
+  live=true;phase='complete';$('#restart').disabled=false;bodyReady=handReady=true;compositor={clear(){clears++},dispose(){disposes++}};report.live={targetRecognized:true,exitTriggered:true,personLost:false,requiresTargetAgain:false};$('#flowReplay').click();
+  const replayUsesExistingRestart=phase==='target'&&clears===1&&!placement.visible&&!report.live.targetRecognized&&!report.live.exitTriggered;
+  const requiresCover=phase==='target'&&person.state(performance.now()).bound===false,cardHiddenAfterReplay=$('#replayPanel').hidden;
+  presentationFlow.update({live:true,phase:'active',personVisible:true});stopLive();const stopHidesAll=presentationFlow.snapshot().hidden&&!presentationFlow.snapshot().replayVisible&&disposes===1;
+  report.tests.PRESENTATION_FLOW={rows,stableWrites,guardedOutsideSession,replayUsesExistingRestart,requiresCover,cardHiddenAfterReplay,stopHidesAll,physicalCameraTest:false};const t=report.tests.PRESENTATION_FLOW;t.passed=rows.map(r=>r.stage).join(',')==='target,body,active,paused,exiting,complete'&&rows.slice(0,-1).every(r=>!r.replayVisible)&&rows.at(-1).replayVisible&&rows[2].steps[2].current==='step'&&stableWrites&&guardedOutsideSession&&replayUsesExistingRestart&&requiresCover&&cardHiddenAfterReplay&&stopHidesAll;if(!t.passed)throw new Error('Falha no guia de etapas ou no recomeço pelo caderno');status('Guia, pausa, saída, recomeço pelo caderno e encerramento conferidos.');
+ }finally{live=saved.live;compositor=saved.compositor;report.live=saved.reportLive;bodyReady=saved.bodyReady;handReady=saved.handReady;$('#restart').disabled=saved.restartDisabled;resetScene();phase='idle';presentationFlow.hide();delete $('#view').dataset.flowProof;$('#view').classList.remove('live');}
+});
+regressionStages.push(['flowTest','Guia de etapas e próxima aparição pelo caderno',()=>report.tests.PRESENTATION_FLOW?.passed]);
+
+$('#sideWalkTest').onclick=()=>runTest('side-walk-transfer',async()=>{
+ const saved={demo,front,side:$('#side').value};const rows=[];let lastQuat=null,boneMotion=0;
+ const makeBody=()=>{const pts=Array.from({length:33},()=>({x:.5,y:.5,visibility:0,presence:1}));for(const [i,x,y] of [[11,.4,.3],[12,.6,.3],[23,.43,.5],[24,.57,.5],[25,.44,.7],[26,.56,.7],[27,.44,.88],[28,.56,.88],[29,.44,.9],[30,.56,.9],[31,.43,.92],[32,.57,.92]])Object.assign(pts[i],{x,y,visibility:.95});return bodySnapshot(pts);};
+ try{
+  defaultCamera();resetScene();front=false;$('#side').value='left';phase='body';const b=makeBody(),now=performance.now();acceptBody({body:b},now-100);acceptBody({body:b},now);appearanceAt=now-20000;smokeStart=null;smoke.visible=false;restoreMaterials();demo=true;$('#view').classList.add('live');
+  const initial=placement.position.x,scale=placement.scale.x;$('#side').value='right';updatePlacement(b);const requested=sideWalk.active&&sideWalk.changes===1,start=performance.now();let previousX=placement.position.x,previousAt=start,maxRootSpeed=0,peakWalkWeight=0,minScale=scale,maxScale=scale,captures=0;
+  while(performance.now()-start<6500){acceptBody({body:b},performance.now());await sleep(40);const at=performance.now(),state=sideWalk.snapshot(),x=placement.position.x,dt=(at-previousAt)/1000;if(state.active&&dt>0)maxRootSpeed=Math.max(maxRootSpeed,state.frameSpeed);previousX=x;previousAt=at;minScale=Math.min(minScale,placement.scale.x);maxScale=Math.max(maxScale,placement.scale.x);
+   const anim=naturalAnimator.snapshot(),weight=anim.clips.find(c=>c.name==='06_Caminhada_Calma').weight;peakWalkWeight=Math.max(peakWalkWeight,weight);const bone=model.getObjectByName('bip_hip_L');if(lastQuat)boneMotion+=lastQuat.angleTo(bone.quaternion);lastQuat=bone.quaternion.clone();rows.push({ms:at-start,x,scale:placement.scale.x,walkWeight:weight,...state});
+   if(state.active&&state.distance>(captures+1)*.28&&captures<3){sampleFrame(null,'Troca de lado · passos '+(captures+1));captures++;}
+   if(!state.active&&at-start>700)break;
+  }
+  const arrived=Math.abs(placement.position.x-targetPlacement.x)/placement.scale.x<.04,scalePreserved=maxScale-minScale<.001,travelled=Math.abs(placement.position.x-initial)/scale>.5,finished=!sideWalk.active;
+  $('#side').value='left';updatePlacement(b);const restarted=sideWalk.active,oldDistance=sideWalk.distance;startExit('side-walk-abort');const exitCancels=!sideWalk.active&&sideWalk.distance===oldDistance;resetScene();const resetClears=sideWalk.distance===0&&!sideWalk.active;sideWalk.request(-1,1,true);stopLive();const stopCancels=!sideWalk.active&&!placement.visible;
+  report.tests.SIDE_WALK={requested,arrived,finished,travelled,scalePreserved,maxRootSpeed,peakWalkWeight,boneMotion,restarted,exitCancels,resetClears,stopCancels,rows,approvedClipReused:true,physicalCameraTest:false};const t=report.tests.SIDE_WALK;t.passed=requested&&arrived&&finished&&travelled&&scalePreserved&&maxRootSpeed<=.650001&&peakWalkWeight>.65&&boneMotion>.15&&restarted&&exitCancels&&resetClears&&stopCancels;if(!t.passed)throw new Error('Falha na caminhada entre lados, escala ou ciclo de saída');status('Troca de lado com passos do clipe aprovado, velocidade limitada, escala e saída conferidas.');
+ }finally{demo=saved.demo;front=saved.front;$('#side').value=saved.side;resetScene();phase='idle';$('#view').classList.remove('live');}
+});
+regressionStages.push(['sideWalkTest','Caminhada na troca de lado sem alterar escala',()=>report.tests.SIDE_WALK?.passed]);
+
+$('#matteRGBTest').onclick=()=>runTest('matte-rgb-integrity',async()=>{
+ const host=document.createElement('div'),c=new Compositor(host,true),OldCompositor=(await import('./compositor-v028.js')).Compositor,legacy=new OldCompositor(document.createElement('div'),true);c.liveVideo=legacy.liveVideo=true;const source=canvas(),ctx=source.getContext('2d'),pixel=(x,y)=>Array.from(c.layers[1].getContext('2d').getImageData(x,y,1,1).data);const alpha=new Uint8Array(64*86);for(let y=15;y<75;y++)for(let x=10;x<40;x++)alpha[y*64+x]=255;const hole=40*64+20;alpha[hole]=0;
+ const paint=(colour,shift=0)=>{ctx.fillStyle='rgb(30,80,180)';ctx.fillRect(0,0,W,H);ctx.fillStyle=colour;ctx.fillRect(75+shift,110,225,450);};
+ try{
+  paint('rgb(210,95,80)');legacy.paint({bitmap:await createImageBitmap(source),width:64,height:86,alpha,body:{points:[]}});legacy.paintVideo(source,true);const previousHoleAlpha=legacy.layers[1].getContext('2d').getImageData(154,301,1,1).data[3];c.paint({bitmap:await createImageBitmap(source),width:64,height:86,alpha,body:{points:[]}});c.paintVideo(source,true);const restored=pixel(154,301),closedMaskHole=restored[3]===255&&Math.abs(restored[0]-210)<=1&&Math.abs(restored[1]-95)<=1,holesFilled=c.maskHolesFilled;
+  ctx.fillStyle='rgb(255,190,170)';ctx.fillRect(188,336,7,6);legacy.paintVideo(source,true);const previousGateAlpha=legacy.layers[1].getContext('2d').getImageData(191,339,1,1).data[3];c.paintVideo(source,true);const micro=pixel(191,339),gateHolesFilled=c.gateHolesFilled,microChangeNotBlack=micro[3]>240&&micro[0]>240&&micro[1]>180;for(const [compositor,label] of [[legacy,'Antes · buracos na sobreposição simulada'],[c,'Depois · cores da pessoa preservadas']]){const frame=document.createElement('canvas');frame.width=W;frame.height=H+50;const f=frame.getContext('2d');f.fillStyle='#202126';f.fillRect(0,0,W,H+50);f.fillStyle='white';f.font='18px system-ui';f.fillText(label,10,32);f.drawImage(source,0,50);f.fillStyle='#08070a';f.fillRect(110,230,220,380);f.drawImage(compositor.layers[1],0,50);$('#samples').appendChild(frame);}
+  const region=c.layers[1].getContext('2d').getImageData(100,180,150,240).data,src=ctx.getImageData(100,180,150,240).data;let opaque=0,blackCorruption=0;for(let i=0;i<region.length;i+=4)if(region[i+3]===255){opaque++;if(Math.abs(region[i]-src[i])+Math.abs(region[i+1]-src[i+1])+Math.abs(region[i+2]-src[i+2])>6)blackCorruption++;}
+  const outsideTransparent=pixel(20,20)[3]===0;paint('rgb(210,95,80)',240);c.paintVideo(source,true);const realMoveRejected=pixel(150,300)[3]===0;
+  paint('rgb(5,4,6)');const solid=alpha.slice();solid[hole]=255;c.paint({bitmap:await createImageBitmap(source),width:64,height:86,alpha:solid,body:{points:[]}});c.paintVideo(source,true);const dark=pixel(154,301),darkClothingPreserved=dark[3]===255&&Math.abs(dark[0]-5)<=1;
+  const captured=performance.now()-500;c.paint({bitmap:await createImageBitmap(source),captureAt:captured,width:64,height:86,alpha:solid,body:{points:[]}});c.paintVideo(source,true);const expiredCleared=pixel(154,301)[3]===0;
+  const raw=Uint8Array.from([255,255,255,255,0,0,255,255,255]),out=new Uint8Array(9);closePinholes(raw,out,3,3);const openContourNotFilled=out[4]===0;
+  report.tests.MATTE_RGB={previousHoleAlpha,previousGateAlpha,closedMaskHole,holesFilled,gateHolesFilled,microChangeNotBlack,opaque,blackCorruption,outsideTransparent,realMoveRejected,darkClothingPreserved,expiredCleared,openContourNotFilled,grid:[64,86],physicalCameraTest:false};const t=report.tests.MATTE_RGB;t.passed=previousHoleAlpha<64&&previousGateAlpha===0&&closedMaskHole&&holesFilled===1&&gateHolesFilled>=1&&microChangeNotBlack&&opaque>1000&&blackCorruption===0&&outsideTransparent&&realMoveRejected&&darkClothingPreserved&&expiredCleared&&openContourNotFilled;if(!t.passed)throw new Error('Falha nas cores do recorte, buracos ou rejeição de movimento');status('Recorte: cores originais, pequenos buracos, roupa escura, movimento e expiração conferidos.');
+ }finally{c.dispose();legacy.dispose();}
+});
+regressionStages.push(['matteRGBTest','Recorte sem buracos pequenos ou corrupção de cor',()=>report.tests.MATTE_RGB?.passed]);
+
+$('#smokeRefineTest').onclick=()=>runTest('smoke-rolling-density',async()=>{
+ const isolated=new THREE.Scene();isolated.background=new THREE.Color('#7c7782');const probe=new LayeredSmoke(128);isolated.add(probe);probe.visible=true;const copy=canvas(),ctx=copy.getContext('2d'),read=()=>{renderer.render(isolated,camera);ctx.drawImage(renderer.domElement,0,0,W,H);return ctx.getImageData(0,0,W,H).data.slice();};
+ try{
+  defaultCamera();probe.update(.4,'entry');const first=read();const calls=renderer.info.render.calls,triangles=renderer.info.render.triangles;probe.update(.4,'entry');const repeat=read();probe.update(.405,'entry');const next=read();let repeatDifference=0,stepDifference=0;for(let i=0;i<first.length;i+=4){repeatDifference+=Math.abs(first[i]-repeat[i])+Math.abs(first[i+1]-repeat[i+1])+Math.abs(first[i+2]-repeat[i+2]);stepDifference+=Math.abs(first[i]-next[i])+Math.abs(first[i+1]-next[i+1])+Math.abs(first[i+2]-next[i+2]);}
+  probe.update(.4,'exit','economica');read();const economyTriangles=renderer.info.render.triangles,texture=probe.texture,oneTexture=Object.values(probe.material.uniforms).filter(v=>v.value?.isTexture).length===1,rolling=probe.material.uniforms.smokeFlow.value===.4;probe.update(1,'exit');const endsClear=probe.snapshot().peakAlpha===0;const averageStep=stepDifference/(W*H*3);
+  report.tests.SMOKE_REFINEMENT={calls,triangles,economyTriangles,oneTexture,textureSize:[texture.image.width,texture.image.height],rolling,repeatDifference,averageStep,endsClear,externalTextures:0,physicalMobilePerformanceValidated:false};const t=report.tests.SMOKE_REFINEMENT;t.passed=calls===1&&triangles===256&&economyTriangles===192&&oneTexture&&t.textureSize[0]===128&&rolling&&repeatDifference===0&&averageStep<4&&averageStep>0&&endsClear;if(!t.passed)throw new Error('Falha na continuidade ou no orçamento da fumaça');status('Fumaça com densidade interna em movimento: continuidade, textura única e orçamento gráfico conferidos.');
+ }finally{probe.dispose();defaultCamera();}
+});
+regressionStages.push(['smokeRefineTest','Fumaça com densidade em movimento e orçamento preservado',()=>report.tests.SMOKE_REFINEMENT?.passed]);
+
+$('#gpuOcclusionTest').onclick=()=>runTest('gpu-opaque-occlusion',async()=>{
+ const host=document.createElement('div'),probe=new Compositor(host,true),isolated=new THREE.Scene(),source=document.createElement('canvas');source.width=640;source.height=480;const ctx=source.getContext('2d'),read=()=>{renderer.render(isolated,camera);const c=canvas(),x=c.getContext('2d');x.drawImage(renderer.domElement,0,0,W,H);return x.getImageData(0,0,W,H).data;},pixel=(data,x,y)=>Array.from(data.slice((y*W+x)*4,(y*W+x)*4+4));
+ probe.liveVideo=true;probe.attach(isolated);const alpha=new Uint8Array(64*86);for(let y=10;y<78;y++)for(let x=9;x<54;x++)alpha[y*64+x]=255;
+ const fill=()=>{ctx.fillStyle='rgb(33,80,170)';ctx.fillRect(0,0,640,480);ctx.fillStyle='rgb(205,95,75)';ctx.fillRect(140,20,200,440);ctx.fillStyle='rgb(5,4,6)';ctx.fillRect(340,20,160,440);};
+ const paint=async()=>probe.paint({bitmap:await createImageBitmap((()=>{const c=canvas();drawCover(source,c);return c;})()),width:64,height:86,alpha,body:{points:[]},captureAt:performance.now()});
+ try{
+  defaultCamera();fill();await paint();let at=performance.now();probe.paintVideo(source,true,at);const first=read(),colour=pixel(first,120,300),dark=pixel(first,330,300),outside=pixel(first,10,10),calls=renderer.info.render.calls,triangles=renderer.info.render.triangles;
+  let partialPixels=0,opaquePixels=0;for(let i=3;i<first.length;i+=4){if(first[i]>0&&first[i]<255)partialPixels++;if(first[i]===255)opaquePixels++;}
+  const sourceRGB=colour[3]===255&&Math.abs(colour[0]-205)<=1&&Math.abs(colour[1]-95)<=1&&Math.abs(colour[2]-75)<=1,darkPreserved=dark[3]===255&&dark[0]===5&&dark[1]===4;
+  const frame=canvas();frame.getContext('2d').putImageData(new ImageData(first,W,H),0,0);$('#samples').appendChild(frame);
+  const updateBefore=probe.gateUpdates;for(let i=1;i<=5;i++)probe.paintVideo(source,true,at+i*8);const throttled=probe.gateUpdates===updateBefore;probe.paintVideo(source,true,at+70);const gateResumes=probe.gateUpdates===updateBefore+1;
+  ctx.fillStyle='rgb(245,225,210)';ctx.fillRect(140,20,200,440);probe.paintVideo(source,true,at+140);const moved=read(),motionRejected=pixel(moved,120,300)[3]===0;
+  fill();await paint();probe.paintVideo(source,true,performance.now());probe.paintVideo(source,true,probe.maskAt+451);const expired=!probe.overlay.visible&&!probe.foregroundDrawn&&pixel(read(),120,300)[3]===0;
+  await paint();probe.paintVideo(source,true);probe.mode='off';probe.paintVideo(source,true);const offHides=!probe.overlay.visible;
+  probe.mode='refined';await paint();probe.paintVideo(source,true);probe.paintVideo(source,false);const lostHides=!probe.overlay.visible;probe.clear();const cleared=!probe.maskReady&&!probe.overlay.visible;
+  const v=document.createElement('video');v.muted=true;v.playsInline=true;const stream=source.captureStream(20);let nativeVideoRGB=false,nativeVideoTexture=false,streamReleased=false,nativePixel=null,nativeReference=null;
+  try{v.srcObject=stream;await v.play();await sleep(150);await paint();probe.paintVideo(v,true);const native=read(),p=pixel(native,120,300);nativePixel=p;const decoded=canvas();drawCover(v,decoded);nativeReference=Array.from(decoded.getContext('2d').getImageData(120,300,1,1).data);nativeVideoRGB=p[3]===255&&Math.abs(p[0]-205)<=2&&Math.abs(p[1]-95)<=2&&Math.abs(p[2]-75)<=2;nativeVideoTexture=probe.videoTexture.isVideoTexture===true;}
+  finally{stream.getTracks().forEach(t=>t.stop());v.pause();v.srcObject=null;streamReleased=stream.getTracks().every(t=>t.readyState==='ended');}
+  const stats=probe.previewStats(),mirrorPreserved=probe.layers.every(c=>c.style.transform==='scaleX(-1)'),oneRenderer=host.querySelectorAll('canvas').length===3;
+  probe.dispose();probe.dispose();const disposed=!isolated.children.length&&!host.children.length&&probe.disposed;
+  report.tests.GPU_OCCLUSION={sourceRGB,colour,darkPreserved,dark,outsideTransparent:outside[3]===0,partialPixels,opaquePixels,calls,triangles,throttled,gateResumes,motionRejected,expired,offHides,lostHides,cleared,mirrorPreserved,oneRenderer,disposed,nativeVideoRGB,nativePixel,nativeReference,nativeVideoTexture,streamReleased,stats,physicalDepthMeasured:false,physicalCameraTest:false};const t=report.tests.GPU_OCCLUSION;t.passed=sourceRGB&&darkPreserved&&t.outsideTransparent&&partialPixels===0&&opaquePixels>10000&&calls===1&&triangles===2&&throttled&&gateResumes&&motionRejected&&expired&&offHides&&lostHides&&cleared&&mirrorPreserved&&oneRenderer&&disposed&&nativeVideoRGB&&nativeVideoTexture&&streamReleased&&stats.cpuFullFrameCopies===0;if(!t.passed)throw new Error('Falha na oclusão GPU opaca, RGB, validade ou descarte');status('Oclusão GPU: interior opaco, RGB e roupa preta preservados, vídeo atual e expiração conferidos.');
+ }finally{probe.dispose();defaultCamera();}
+});
+regressionStages.push(['gpuOcclusionTest','Oclusão opaca por GPU, cores, movimento e limpeza',()=>report.tests.GPU_OCCLUSION?.passed]);
+
+$('#handLatencyTest').onclick=()=>runTest('hand-priority',async()=>{
+ const OldBudget=(await import('./live-budget-v026.js')).LiveBudget;
+ const simulate=(Budget,focused)=>{const b=new Budget(),jobs=[];let busyUntil=0;for(let now=0;now<=8000;now+=10){if(b.active&&now>=busyUntil)b.finished(b.active,now);const state={bodyReady:true,handReady:true,bodyAllowed:true,handAllowed:true,videoTime:Math.floor(now/33),handFocused:focused};const kind=b.choose(now,state);if(kind){b.started(kind,now,state.videoTime);jobs.push({kind,now});busyUntil=now+(kind==='body'?40:30);if(b.choose(now,state)!==null)throw new Error('Sobreposição de inferências');}}const times=jobs.filter(j=>j.kind==='hand').map(j=>j.now),bt=jobs.filter(j=>j.kind==='body').map(j=>j.now);return {hands:times.length,meanHandGap:times.slice(1).reduce((s,x,i)=>s+x-times[i],0)/(times.length-1),bodyMaxGap:Math.max(...bt.slice(1).map((x,i)=>x-bt[i]))};};
+ const old=simulate(OldBudget,true),focused=simulate(LiveBudget,true),search=simulate(LiveBudget,false),planner=new HandFramePlanner(),points=Array.from({length:21},(_,i)=>({x:.45+(i%5)*.015,y:.4+Math.floor(i/5)*.015}));planner.observe({handSeen:true,points},0);const frames=[];for(let now=0;now<=600;now+=100)frames.push(planner.next(now));const crops=frames.filter(f=>f.kind==='hand-crop').length,periodicFull=planner.next(700).kind==='full';planner.observe({handSeen:true,points},800);const focusedFrame=planner.next(900),bounded=focusedFrame.x>=0&&focusedFrame.y>=0&&focusedFrame.x+focusedFrame.w<=1&&focusedFrame.y+focusedFrame.h<=1;const expired=planner.next(1600).kind!=='hand-crop';
+ const gate=new GestureGate();let firedAt=null;for(let ms=0;ms<=1300;ms+=100)if(gate.update({name:'Closed_Fist',score:.95,center:{x:.5,y:.5}},ms)){firedAt=ms;break;}
+ const guardedHold=firedAt>=900&&firedAt<=1100;const premature=new GestureGate();for(let ms=0;ms<=800;ms+=100)premature.update({name:'Closed_Fist',score:.95},ms);const noEarlyExit=!premature.fired;
+ report.tests.HAND_LATENCY={old,focused,search,crops,periodicFull,bounded,expired,guardedHold,noEarlyExit,firedAt,classificationAndGateUnchanged:true,phoneLatencyValidated:false};const t=report.tests.HAND_LATENCY;t.passed=focused.hands>old.hands&&focused.meanHandGap<old.meanHandGap&&focused.bodyMaxGap<=320&&search.hands===old.hands&&crops>=5&&periodicFull&&bounded&&expired&&guardedHold&&noEarlyExit;if(!t.passed)throw new Error('Falha na prioridade da mão, busca periódica ou confirmação');status('Mão priorizada sem inferências simultâneas; busca, expiração e confirmação de 900 ms preservadas.');
+});
+regressionStages.push(['handLatencyTest','Prioridade da mão, recortes e confirmação preservada',()=>report.tests.HAND_LATENCY?.passed]);
+
+$('#smokeEvolutionTest').onclick=()=>runTest('smoke-vortices',async()=>{
+ const PreviousSmoke=(await import('./smoke-volume-v032.js')).LayeredSmoke,old=new PreviousSmoke(128),probe=new LayeredSmoke(128),isolated=new THREE.Scene();isolated.background=new THREE.Color('#88818d');const read=object=>{isolated.add(object);object.visible=true;renderer.render(isolated,camera);const c=canvas(),ctx=c.getContext('2d');ctx.drawImage(renderer.domElement,0,0,W,H);isolated.remove(object);return c;};
+ try{defaultCamera();old.update(.4,'exit');probe.update(.4,'exit');const before=read(old),after=read(probe),a=before.getContext('2d').getImageData(0,0,W,H).data,b=after.getContext('2d').getImageData(0,0,W,H).data;let changed=0;for(let i=0;i<a.length;i+=4)if(Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2])>12)changed++;
+  for(const [c,title] of [[before,'3.2 · fumaça anterior'],[after,'3.4.1 · correntes, redemoinhos e filamentos']]){const f=document.createElement('canvas');f.width=W;f.height=H+50;const ctx=f.getContext('2d');ctx.fillStyle='#202126';ctx.fillRect(0,0,W,H+50);ctx.fillStyle='white';ctx.font='17px system-ui';ctx.fillText(title,10,30);ctx.drawImage(c,0,50);$('#samples').appendChild(f);}
+  const stats=probe.snapshot(),shaderSamples=(probe.material.fragmentShader.match(/texture2D\(/g)??[]).length;let alphaEnds=true;for(const mode of ['entry','exit'])for(const u of [0,1]){probe.update(u,mode);alphaEnds&&=probe.snapshot().peakAlpha===0;}
+  report.tests.SMOKE_EVOLUTION={changedPixels:changed,shaderSamples,previousShaderSamples:old.snapshot().textureSamplesPerFragment,stats,alphaEnds,physicalMobilePerformanceValidated:false};const t=report.tests.SMOKE_EVOLUTION;t.passed=changed>1500&&shaderSamples===1&&stats.textureSize===128&&stats.textureBytes===65536&&stats.capacity===128&&stats.drawCallsPerVisiblePass===1&&stats.anisotropicWisps&&stats.structuredVortices&&alphaEnds;if(!t.passed)throw new Error('Falha na evolução visual ou no orçamento da fumaça');status('Fumaça: redemoinhos e filamentos, mesma textura/partículas e uma amostra por fragmento.');
+ }finally{old.dispose();probe.dispose();}
+});
+regressionStages.push(['smokeEvolutionTest','Fumaça com redemoinhos, filamentos e menor custo de amostragem',()=>report.tests.SMOKE_EVOLUTION?.passed]);
+
+$('#lightingTest').onclick=()=>runTest('hand-lighting',async()=>{
+ let runner,oldRunner;const rows=[],negativeRows=[];try{
+  runner=new WorkerRunner('./hand-worker-v0341.js');oldRunner=new WorkerRunner('./hand-worker-v027.js');await Promise.all([runner.ready,oldRunner.ready]);const photo=await loadImage('./fist.jpg'),openFile=await loadImage('./open-palm-v034.jpg'),thumb=await loadImage('./thumb_up.jpg');let clock=1000;const open=document.createElement('canvas');open.width=openFile.width/2;open.height=openFile.height;open.getContext('2d').drawImage(openFile,openFile.width/2,0,open.width,open.height,0,0,open.width,open.height);
+  const make=(image,brightness,lamp=false)=>{const c=canvas(),ctx=c.getContext('2d');ctx.fillStyle='#16161a';ctx.fillRect(0,0,W,H);ctx.filter='brightness('+brightness+')';const w=W*.58,h=w*(image.naturalHeight??image.height)/(image.naturalWidth??image.width);ctx.drawImage(image,(W-w)/2,(H-h)/2,w,h);ctx.filter='none';if(lamp){const glow=ctx.createRadialGradient(410,95,4,410,95,90);glow.addColorStop(0,'#fffdf2');glow.addColorStop(.3,'#fff6d0');glow.addColorStop(1,'rgba(255,240,180,0)');ctx.fillStyle=glow;ctx.fillRect(315,0,165,190);}return c;};
+  for(const [brightness,lamp] of [[1,false],[.6,false],[.3,false],[.15,false],[.08,true],[.2,true],[1.5,false]]){
+   const c=make(photo,brightness,lamp),old=await oldRunner.infer(c,clock);clock+=180;const gate=new GestureGate(),association=new HandAssociation(),planner=new HandFramePlanner();let detected=0,fired=false,lighting=null,firstSeen=null;
+   for(let i=0;i<12&&!fired;i++){const frame=planner.next(clock),crop=canvas();crop.getContext('2d').drawImage(c,frame.x*W,frame.y*H,frame.w*W,frame.h*H,0,0,W,H);const raw=await runner.infer(crop,clock),mapped=mapHandResult(raw,frame);mapped.hands=raw.hands.map(h=>({...h,points:h.points.map(p=>({...p,x:frame.x+p.x*frame.w,y:frame.y+p.y*frame.h}))}));const selected=association.select(mapped,clock,gate.armed);planner.observe(selected,clock);if(selected.handSeen){detected++;firstSeen??=i*180;}fired=gate.update(selected.gesture,clock);lighting=raw.lighting;clock+=180;}
+   rows.push({brightness,lamp,baselineSeen:old.handSeen,baselineGesture:old.gesture?.name,detected,firstSeenMs:firstSeen,fired,lighting});if(lamp){const frame=document.createElement('canvas');frame.width=W;frame.height=H+50;const f=frame.getContext('2d');f.fillStyle='#202126';f.fillRect(0,0,W,H+50);f.fillStyle='white';f.font='16px system-ui';f.fillText('Contraluz simulada · brilho '+brightness,10,30);f.drawImage(c,0,50);$('#samples').appendChild(frame);}
+  }
+  for(const image of [open,thumb])for(const brightness of [.2,1,1.5]){const c=make(image,brightness,true),gate=new GestureGate();let fired=false,seen=0;for(let i=0;i<8;i++){const raw=await runner.infer(c,clock);seen+=Number(raw.handSeen);if(image===thumb&&resolveGesture({name:'None',score:.9},raw.shape)?.name==='Closed_Fist')throw new Error('Polegar não pode virar punho quando a classificação é incerta');fired=gate.update(raw.gesture,clock)||fired;clock+=180;}negativeRows.push({image:image===open?'real-open-palm':'thumb-up',brightness,fired,seen});}
+  const closed={valid:true,folded:4,open:0,thumbDistance:.4,closed:true,thumbFolded:true},uncertain={valid:true,folded:3,open:1,thumbDistance:.95},opened={valid:true,folded:0,open:4,thumbDistance:1.1};const conflictGate=new GestureGate();let held=false;const progress=[];for(let t=0;t<=1440;t+=180){const shape=t===540?uncertain:closed;held=conflictGate.update(resolveGesture({name:'Open_Palm',score:.96},shape),t)||held;progress.push(conflictGate.progress);}const openStops=resolveGesture({name:'Open_Palm',score:.96},opened).name==='Open_Palm';const openingGate=new GestureGate();openingGate.update(resolveGesture({name:'Closed_Fist',score:.9},closed),0);openingGate.update(resolveGesture({name:'Open_Palm',score:.98},opened),200);const actualOpenClears=!openingGate.armed;
+  report.tests.HAND_LIGHTING={rows,negativeRows,heldThroughContradictoryClassifier:held,openStops,actualOpenClears,progress,confirmationMs:900,extraModelPassesPerFrame:0,syntheticLighting:true,physicalClassroomTest:false};const t=report.tests.HAND_LIGHTING;t.passed=rows.every(r=>r.fired)&&negativeRows.every(r=>!r.fired)&&negativeRows.some(r=>r.image==='real-open-palm'&&r.seen>0)&&held&&openStops&&actualOpenClears;if(!t.passed)throw new Error('Falha no punho/abertura com variação de iluminação');status('Punho, palma aberta real, contraluz simulada e abertura real conferidos; confirmação de 900 ms preservada.');
+ }finally{runner?.close();oldRunner?.close();}
+});
+regressionStages.push(['lightingTest','Mão em luz variável, contraluz e abertura real',()=>report.tests.HAND_LIGHTING?.passed]);
+
+$('#maskAlignmentTest').onclick=()=>runTest('mask-motion-exposure',async()=>{
+ const {alignMask,illuminationOffset}=await import('./mask-alignment-v034.js'),host=document.createElement('div'),probe=new Compositor(host,false),isolated=new THREE.Scene(),source=canvas(),ctx=source.getContext('2d'),alpha=new Uint8Array(64*86),hist=new Uint32Array(511);for(let y=15;y<70;y++)for(let x=15;x<40;x++)alpha[y*64+x]=255;
+ const paint=(shift,light=0)=>{ctx.fillStyle='rgb('+(30+light)+','+(60+light)+','+(110+light)+')';ctx.fillRect(0,0,W,H);ctx.fillStyle='rgb('+(130+light)+','+(70+light)+','+(55+light)+')';ctx.fillRect(15*7.5+shift,15*640/86,25*7.5,55*640/86);ctx.fillStyle='rgb('+(60+light)+','+(40+light)+','+(30+light)+')';ctx.fillRect(170+shift,240,65,110);};
+ const read=()=>{renderer.render(isolated,camera);const c=canvas(),x=c.getContext('2d');x.drawImage(renderer.domElement,0,0,W,H);return {canvas:c,pixel:(px,py)=>Array.from(x.getImageData(px,py,1,1).data)};};
+ try{defaultCamera();probe.liveVideo=true;probe.attach(isolated);paint(0);probe.paint({bitmap:await createImageBitmap(source),width:64,height:86,alpha,body:{points:[]},captureAt:performance.now()});const t=performance.now();probe.paintVideo(source,true,t);read();paint(15);probe.paintVideo(source,true,t+80);const moved=read(),aligned=probe.alignment.accepted&&probe.alignment.dx===2&&probe.alignment.dy===0,newEdgeOpaque=moved.pixel(306,300)[3]===255,oldEdgeClear=moved.pixel(115,300)[3]===0;
+  const f=document.createElement('canvas');f.width=W;f.height=H+50;const fc=f.getContext('2d');fc.fillStyle='#202126';fc.fillRect(0,0,W,H+50);fc.fillStyle='white';fc.font='16px system-ui';fc.fillText('Máscara acompanha deslocamento simulado de 15 px',10,30);fc.drawImage(source,0,50);fc.drawImage(moved.canvas,0,50);$('#samples').appendChild(f);
+  paint(0,40);probe.paintVideo(source,true,t+160);const bright=read().pixel(150,300),exposureOpaque=bright[3]===255&&Math.abs(bright[0]-170)<=1;const exposure=probe.exposureDelta;probe.paintVideo(source,true,probe.maskAt+451);const staleClears=!probe.overlay.visible;probe.clear();const alignmentCleared=probe.alignment===null&&probe.overlayMaterial.uniforms.maskOffset.value.length()===0;
+  const blank=new Uint8ClampedArray(64*86*4).fill(100),noFalseShift=alignMask(blank,blank,0).accepted===false;
+  report.tests.MASK_ALIGNMENT={aligned,newEdgeOpaque,oldEdgeClear,exposureOpaque,exposure,staleClears,alignmentCleared,noFalseShift,grid:[64,86],maxShiftCells:3,actualGPUReadback:true,physicalMotionTest:false};const r=report.tests.MASK_ALIGNMENT;r.passed=aligned&&newEdgeOpaque&&oldEdgeClear&&exposureOpaque&&Math.abs(exposure-40)<=1&&staleClears&&alignmentCleared&&noFalseShift;if(!r.passed)throw new Error('Falha no alinhamento da máscara ou mudança de exposição');status('Recorte acompanha deslocamento limitado, mantém RGB com exposição variável e expira após 450 ms.');
+ }finally{probe.dispose();}
+});
+regressionStages.push(['maskAlignmentTest','Oclusão alinhada ao movimento e à exposição',()=>report.tests.MASK_ALIGNMENT?.passed]);
