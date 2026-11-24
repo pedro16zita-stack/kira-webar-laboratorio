@@ -1,0 +1,20 @@
+/* Static, decorative artwork; the AR scene has its own unchanged rendering. */
+body{background:#100e11;isolation:isolate}
+main{position:relative;z-index:1}
+.landing-art{position:absolute;top:0;left:0;right:0;height:1050px;overflow:hidden;pointer-events:none;z-index:0;background:#100e11}
+.landing-art img{display:block;width:100%;height:100%;object-fit:cover;object-position:center 36%;filter:grayscale(1);opacity:.68}
+.landing-art::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(16,14,17,.40),rgba(30,9,20,.28) 28%,rgba(16,14,17,.62) 55%,#100e11 94%),linear-gradient(90deg,rgba(16,14,17,.92),transparent 28%,transparent 72%,rgba(16,14,17,.92));}
+.intro{min-height:390px;padding-top:28px;padding-bottom:28px;text-shadow:0 2px 18px #100e11}
+.intro .eyebrow{letter-spacing:.25em;color:#e1b3c1;font-size:10px}
+.intro h1{font-size:clamp(76px,15vw,120px);margin-top:30px}
+.intro h1 span{color:#e0b7c4;letter-spacing:.5em}
+.intro .lead{margin-top:100px;color:#f4edf1;font-size:19px;line-height:1.5}
+.setup{background:rgba(23,17,24,.94);border-color:#70505e;border-radius:16px;box-shadow:0 18px 50px #09060940}
+.actions .primary{background:#8e263d;border-color:#d17a8b;box-shadow:0 5px 20px #09060940}
+.actions .quiet{background:#151116f5;border-color:#70505e}
+.session-running .landing-art,.session-starting .landing-art{display:none}
+@media(min-width:900px){.landing-art{height:1150px;max-width:1360px;margin:auto}.landing-art img{object-position:center 43%}.landing-art::after{background:linear-gradient(180deg,#100e115c,#260d1d55 30%,#100e11 96%),linear-gradient(90deg,#100e11 1%,#100e1120 30%,#100e1120 70%,#100e11 99%)}.intro{min-height:410px}.intro .lead{margin-top:125px}}
+@media(max-width:480px){.landing-art{height:850px}.landing-art img{object-position:center 43%;opacity:.72}.landing-art::after{background:linear-gradient(180deg,#100e1160,#200b1738 28%,#100e119c 53%,#100e11 96%),linear-gradient(90deg,#100e114a,transparent 30%,transparent 70%,#100e114a)}.intro{min-height:365px;padding-top:14px}.intro h1{margin-top:25px;font-size:84px}.intro .lead{margin-top:115px;font-size:17px;max-width:29ch}.setup{padding:20px}.eyebrow{line-height:1.8}}
+@media(max-width:350px){.intro h1{font-size:74px}.intro .eyebrow{font-size:9px;letter-spacing:.18em}.intro .lead{font-size:16px}.setup{padding:16px}}
+@media(min-width:900px){.landing-art img{object-position:center 70%}}
+@media(max-width:480px){.landing-art img{height:auto;transform:translateY(-30px)}}
