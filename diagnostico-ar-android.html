@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KIRA · Verificar AR no Android</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#120f13;color:#eee;font:18px/1.55 system-ui,sans-serif}main{max-width:640px;margin:auto;padding:28px 20px}h1{font:42px/1.1 Georgia,serif}h2{font-size:22px}a{color:#efc1ce;overflow-wrap:anywhere}.action{display:block;padding:16px;margin:16px 0;background:#8e263d;border:1px solid #c77c8d;border-radius:10px;color:white;text-align:center;text-decoration:none;font-weight:650}.secondary{background:#29212a}section{border-top:1px solid #56404d;padding:16px 0}small{color:#c9bdc5}code{overflow-wrap:anywhere}p{margin:12px 0}details{margin-top:20px}button{font:inherit;padding:12px;background:#29212a;border:1px solid #78616f;color:white;border-radius:8px;width:100%}[hidden]{display:none!important}</style></head>
+<body><main><p>KIRA · DEATH NOTE</p><h1>Verificar o AR do Android</h1>
+<p id="status" role="status">Este teste separa a abertura do visualizador de problemas no modelo do Ryuk.</p>
+<section><h2>1. Conferir os aplicativos</h2><p>Na Play Store, instale ou atualize os Serviços de AR e atualize o aplicativo Google. Depois volte ao Chrome.</p>
+<a class="action secondary" href="https://play.google.com/store/apps/details?id=com.google.ar.core" target="_blank" rel="noopener">Serviços do Google Play para AR</a>
+<a class="action secondary" href="https://play.google.com/store/apps/details?id=com.google.android.googlequicksearchbox" target="_blank" rel="noopener">Aplicativo Google</a></section>
+<section><h2>2. Abrir o exemplo do Google</h2><p>O exemplo é um astronauta, sem o modelo, a câmera ou o rastreamento do projeto KIRA.</p>
+<a id="sampleCore" class="action">Testar câmera AR com astronauta</a>
+<p>Se voltar para esta página, tente o outro caminho:</p><a id="sampleGoogle" class="action secondary">Testar pelo aplicativo Google</a>
+<p>Se aparecer apenas um fundo neutro com um modelo 3D, procure <strong>Ver no seu espaço</strong>. O teste de AR só funciona quando a câmera abre e o astronauta fica posicionado no ambiente.</p>
+<p id="desktop" hidden>Faça este teste no Chrome do celular Android. Este computador não comprova a abertura do aplicativo no telefone.</p></section>
+<section id="ryukSection" hidden><h2>3. Comparar com Ryuk</h2><p>A capa já foi reconhecida nesta aba. Se o astronauta abrir em AR, compare com o arquivo atual do Ryuk.</p><a id="ryukCore" class="action">Testar Ryuk no visualizador</a><p>Se só o astronauta funcionar, o próximo ajuste será no arquivo nativo do Ryuk.</p></section>
+<p>Me informe qual botão usou e se apareceu a câmera, apenas um modelo 3D, uma mensagem de erro ou se voltou à página.</p>
+<a href="./teste-046.html?v=4.6">Voltar ao projeto KIRA</a>
+<details><summary>Dados desta tentativa</summary><p id="capability"></p><button id="save">Salvar diagnóstico</button><p>Este arquivo registra navegador e tentativas. Não contém fotos e não confirma a abertura do aplicativo externo.</p></details>
+<p><small>Exemplo e protocolo de abertura: <a href="https://developers.google.com/ar/develop/scene-viewer" target="_blank" rel="noopener">documentação do Google Scene Viewer</a>. Nenhuma alteração foi feita na experiência KIRA.</small></p>
+</main><script type="module">
+const $=s=>document.querySelector(s),q=new URLSearchParams(location.search),report={kind:'android-launch-diagnostic',version:'2026-11-25',userAgent:navigator.userAgent,secure:isSecureContext,attempts:[],nativeLaunchConfirmed:false,physicalARValidated:false};
+const sample='https://modelviewer.dev/shared-assets/models/Astronaut.glb';
+function intent(file,route,label){const fallback=new URL(location.href);fallback.search='';fallback.hash='';fallback.searchParams.set('fallback',label);const query=new URLSearchParams({file,mode:route==='core'?'ar_only':'ar_preferred',resizable:'false',title:label,enable_vertical_placement:'false'});return 'intent://arvr.google.com/scene-viewer/1.0?'+query+'#Intent;scheme=https;package='+(route==='core'?'com.google.ar.core':'com.google.android.googlequicksearchbox')+';action=android.intent.action.VIEW;S.browser_fallback_url='+encodeURIComponent(fallback.href)+';end;';}
+for(const [id,file,route,label] of [['sampleCore',sample,'core','Astronauta AR'],['sampleGoogle',sample,'google','Astronauta Google'],['ryukCore',new URL('./ryuk-scene-v046.glb',location.href).href,'core','Ryuk AR']]){const a=$('#'+id);a.href=intent(file,route,label);a.onclick=()=>{report.attempts.push({label,route,at:Date.now(),nativeLaunchConfirmed:false});};}
+if(q.has('fallback')){report.fallback=q.get('fallback');$('#status').textContent='O Android retornou à página na tentativa '+q.get('fallback')+'. A abertura do visualizador não foi confirmada. Confira os aplicativos e tente o outro botão abaixo.';}
+$('#desktop').hidden=/Android/i.test(navigator.userAgent);
+try{const receipt=Number(sessionStorage.getItem('kira-world-cover'));$('#ryukSection').hidden=!(receipt>0&&Date.now()-receipt<30*60*1000);}catch{}
+try{report.xrAPI=!!navigator.xr;report.webXRSupported=!!navigator.xr&&await navigator.xr.isSessionSupported('immersive-ar');}catch(e){report.webXRError={name:e.name,message:e.message};}
+$('#capability').textContent='WebXR: '+(report.webXRSupported?'disponível':'não disponibilizado')+'. O site não consegue verificar se os aplicativos do Android estão instalados.';
+$('#save').onclick=()=>{const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='KIRA_abertura_AR_Android.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+</script></body></html>
